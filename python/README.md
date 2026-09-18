@@ -11,18 +11,21 @@ pip install trustgate
 ```python
 from trustgate import TrustGate, ToolFormat
 
-tg = TrustGate(
-    base_url=os.environ["TRUSTGATE_URL"],          # https://gw.acme.ai
-    api_key=os.environ["TRUSTGATE_API_KEY"],       # ag_…
-    mcp_consumer=os.environ["TRUSTGATE_MCP_CONSUMER"],
-    llm_consumer=os.environ.get("TRUSTGATE_LLM_CONSUMER"),
-)
+tg = TrustGate()   # TRUSTGATE_URL + TRUSTGATE_API_KEY
 ```
 
-Every argument falls back to the environment variable shown. The MCP consumer
-carries the tools; the LLM consumer fronts the models. They are different
-consumers because a consumer has one type — the same API key can be attached
-to both.
+Two values, or none if they are in the environment. The consumers behind the
+key are asked for: `tg.identity()` reads `GET /whoami` once and remembers it.
+
+```python
+identity = tg.identity()
+# KeyConsumer(slug="support-agent", type="MCP", url="https://…/support-agent/mcp", acts_for_users=False)
+# KeyConsumer(slug="support-llm",   type="LLM", url="https://…/support-llm/v1")
+```
+
+`mcp_consumer` and `llm_consumer` (or `TRUSTGATE_MCP_CONSUMER` /
+`TRUSTGATE_LLM_CONSUMER`) are only needed when a key reaches two consumers of
+the same plane — the SDK names them and refuses rather than guessing.
 
 ## An agent that acts as itself
 
@@ -30,6 +33,7 @@ to both.
 agent = tg.connect(requires=["notion_search"])
 
 agent.mcp                                        # url + headers for a framework
+tg.llm()                                         # base_url + api_key for OpenAI/Anthropic
 toolkit = agent.toolkit(ToolFormat.OPENAI_RESPONSES)
 agent.call_tool("notion_search", {"query": "runbook"})
 agent.refresh()                                  # re-read the toolkit
@@ -98,6 +102,7 @@ tests use a fake one. It is also where a retry policy or a proxy belongs.
 | `PolicyBlockedError` | a gateway policy refused the call |
 | `ToolNotFoundError` | the tool left the toolkit under a running agent |
 | `AppActorUnavailableError` / `EndUserActorUnavailableError` | wrong actor for this consumer |
+| `PlaneUnavailableError` | the key reaches no consumer of that plane |
 | `AuthenticationError`, `RateLimitedError`, `ServiceUnavailableError`, `TrustGateServerError` | as named |
 
 ## Development

@@ -30,6 +30,7 @@ from .formats import ConversionWarning, adapter_for, result_to_text
 from .mcp import MCPTransport
 from .schema import StrictResult, inline_refs, strip_injected_nulls, to_strict
 from .transport import Response, Transport, UrllibTransport
+from .whoami import KeyConsumer, KeyIdentity, select_consumer, who_am_i
 from .types import (
     Actor,
     ConnectLink,
@@ -58,6 +59,8 @@ __all__ = [
     "EndUserAgent",
     "EndUserAgentFactory",
     "GatewayTool",
+    "KeyConsumer",
+    "KeyIdentity",
     "InvalidRequestError",
     "LLMEndpoint",
     "MCPTransport",
@@ -81,6 +84,8 @@ __all__ = [
     "adapter_for",
     "inline_refs",
     "result_to_text",
+    "select_consumer",
     "strip_injected_nulls",
     "to_strict",
+    "who_am_i",
 ]

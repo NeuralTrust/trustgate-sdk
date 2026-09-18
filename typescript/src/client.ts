@@ -1,16 +1,10 @@
 import { Agent, EndUserAgent, endUserAgent } from './agent.js'
 import { API_KEY_HEADER, resolveConfig, type ResolvedConfig, type TrustGateConfig } from './config.js'
 import { listConnections } from './connections.js'
-import {
-	AppActorUnavailableError,
-	InvalidRequestError,
-	MissingToolsError,
-	PlaneUnavailableError,
-	TrustGateError,
-	UpstreamNotConnectedError,
-} from './errors.js'
+import { MissingToolsError, TrustGateError, UpstreamNotConnectedError } from './errors.js'
 import { MCPTransport } from './mcp.js'
-import { Actor, type Connection, type GatewayTool } from './types.js'
+import { Actor, type GatewayTool } from './types.js'
+import { selectConsumer, whoAmI, type KeyConsumer, type KeyIdentity } from './whoami.js'
 
 export type ConnectOptions = {
 	/**
@@ -30,21 +24,37 @@ export type LLMEndpoint = {
 	baseUrl: string
 	apiKey: string
 	headers: Record<string, string>
+	/** The consumer behind it, for logs and for error messages. */
+	consumer: string
 }
 
 /**
- * The entry point: one gateway, one API key, two planes.
+ * The entry point: a gateway and a key, and everything else is asked for.
  *
- * The key is attached to consumers, and a consumer has one type — so the
- * tools live behind an MCP consumer and the models behind an LLM one. The
- * same key may be attached to both, which is what lets a single client hand
- * out both halves of an agent.
+ * The key is attached to consumers, and a consumer has one type — so the tools
+ * live behind an MCP consumer and the models behind an LLM one. Their slugs
+ * were chosen by whoever created them, and the two planes do not share a host,
+ * so neither is something a caller should have to carry: the gateway is asked
+ * once, at `connect()`, and answers both.
  */
 export class TrustGate {
 	private readonly config: ResolvedConfig
+	private identityPromise?: Promise<KeyIdentity>
 
 	constructor(config: TrustGateConfig = {}) {
 		this.config = resolveConfig(config)
+	}
+
+	/**
+	 * What this key reaches. Read once and remembered: it is a property of the
+	 * key, and a long-lived process should not re-ask on every call.
+	 */
+	async identity(signal?: AbortSignal): Promise<KeyIdentity> {
+		this.identityPromise ??= whoAmI(this.config, signal).catch((error: unknown) => {
+			this.identityPromise = undefined
+			throw asIdentityError(error)
+		})
+		return this.identityPromise
 	}
 
 	/**
@@ -54,23 +64,15 @@ export class TrustGate {
 	 * clients — it points them somewhere else. Wrapping would mean chasing
 	 * every change they make and breaking streaming on the way.
 	 */
-	get llm(): LLMEndpoint {
-		const slug = this.config.llmConsumer
-		if (!slug) {
-			throw new PlaneUnavailableError(
-				'no LLM consumer configured; pass llmConsumer or set TRUSTGATE_LLM_CONSUMER'
-			)
-		}
+	async llm(signal?: AbortSignal): Promise<LLMEndpoint> {
+		const identity = await this.identity(signal)
+		const consumer = selectConsumer(identity, 'LLM', this.config.llmConsumer, 'llmConsumer')
 		return {
-			baseUrl: `${this.config.baseUrl}/${encodeURIComponent(slug)}/v1`,
+			baseUrl: consumer.url,
 			apiKey: this.config.apiKey,
 			headers: { [API_KEY_HEADER]: this.config.apiKey },
+			consumer: consumer.slug,
 		}
-	}
-
-	/** The MCP endpoint, for a framework that brings its own client. */
-	get mcpUrl(): string {
-		return `${this.config.baseUrl}/${encodeURIComponent(this.mcpSlug())}/mcp`
 	}
 
 	/**
@@ -84,68 +86,30 @@ export class TrustGate {
 	 * present to open a connect link once a batch is going.
 	 */
 	async connect(options: ConnectOptions = {}): Promise<Agent | EndUserAgentFactory> {
-		const slug = this.mcpSlug()
-		const actor = await this.probeActor(slug, options.signal)
-		const transport = new MCPTransport(this.config, this.mcpUrl)
+		const identity = await this.identity(options.signal)
+		const consumer = selectConsumer(identity, 'MCP', this.config.mcpConsumer, 'mcpConsumer')
+		const transport = new MCPTransport(this.config, consumer.url)
 		const tools = await transport.listTools(options.signal)
 		const missing = missingTools(tools, options.requires ?? [])
 		if (missing.length > 0) {
 			throw new MissingToolsError(missing, tools.map((tool) => tool.name))
 		}
 
-		if (actor.actor === Actor.EndUser) {
-			return new EndUserAgentFactory(this.config, slug, this.mcpUrl, tools)
+		// The consumer says which actor it is, so there is nothing to infer and
+		// nothing for the caller to configure wrongly.
+		if (consumer.actsForUsers) {
+			return new EndUserAgentFactory(this.config, consumer, tools)
 		}
 
-		const pending = actor.connections.filter((connection) => connection.status !== 'connected')
+		const connections = await listConnections(this.config, consumer.slug, undefined, options.signal)
+		const pending = connections.filter((connection) => connection.status !== 'connected')
 		if (pending.length > 0) {
 			throw new UpstreamNotConnectedError(
 				pending.map((connection) => connection.provider),
-				`${this.config.baseUrl}/${encodeURIComponent(slug)}/connect`
+				connectPageFor(consumer)
 			)
 		}
-		return new Agent(this.config, slug, transport, tools, missing, actor.connections)
-	}
-
-	/**
-	 * Asks the gateway which actor this consumer is, by asking it something
-	 * only one of the two can answer.
-	 *
-	 * An application that acts as itself has upstream accounts and lists them;
-	 * one that acts for its users has none of its own and says so, with a
-	 * conflict rather than an empty list. So the refusal is the answer.
-	 */
-	private async probeActor(
-		slug: string,
-		signal?: AbortSignal
-	): Promise<{ actor: Actor; connections: Connection[] }> {
-		try {
-			const connections = await listConnections(this.config, slug, undefined, signal)
-			return { actor: Actor.Application, connections }
-		} catch (error) {
-			if (error instanceof AppActorUnavailableError) {
-				return { actor: Actor.EndUser, connections: [] }
-			}
-			if (error instanceof InvalidRequestError) {
-				throw new TrustGateError(
-					'this gateway cannot report an application actor’s own connections, so the SDK ' +
-						'cannot tell which actor the consumer is. Upgrade the gateway, or use the ' +
-						'MCP endpoint directly with trustgate.mcpUrl.',
-					{ cause: error }
-				)
-			}
-			throw error
-		}
-	}
-
-	private mcpSlug(): string {
-		const slug = this.config.mcpConsumer
-		if (!slug) {
-			throw new PlaneUnavailableError(
-				'no MCP consumer configured; pass mcpConsumer or set TRUSTGATE_MCP_CONSUMER'
-			)
-		}
-		return slug
+		return new Agent(this.config, consumer.slug, transport, tools, missing, connections)
 	}
 }
 
@@ -161,18 +125,38 @@ export class EndUserAgentFactory {
 
 	constructor(
 		private readonly config: ResolvedConfig,
-		readonly slug: string,
-		private readonly url: string,
+		private readonly consumer: KeyConsumer,
 		/** The toolkit, which is the same for every user of this application. */
 		readonly tools: GatewayTool[]
 	) {}
 
-	forEndUser(endUser: string): EndUserAgent {
-		return endUserAgent(this.config, this.slug, endUser, this.url, this.tools)
+	get slug(): string {
+		return this.consumer.slug
 	}
+
+	forEndUser(endUser: string): EndUserAgent {
+		return endUserAgent(this.config, this.consumer.slug, endUser, this.consumer.url, this.tools)
+	}
+}
+
+/** The page an operator opens to sign the application in to its own accounts. */
+function connectPageFor(consumer: KeyConsumer): string {
+	return consumer.url.replace(/\/mcp$/, '/connect')
 }
 
 function missingTools(tools: GatewayTool[], required: string[]): string[] {
 	const names = new Set(tools.map((tool) => tool.name))
 	return required.filter((name) => !names.has(name))
+}
+
+/** A gateway that cannot answer for a key cannot be used with one secret. */
+function asIdentityError(error: unknown): unknown {
+	if (error instanceof TrustGateError && error.status === 404) {
+		return new TrustGateError(
+			'this gateway does not serve /whoami, so the SDK cannot resolve which consumers ' +
+				'this key reaches. Upgrade the gateway to a version that serves it.',
+			{ status: 404, cause: error }
+		)
+	}
+	return error
 }

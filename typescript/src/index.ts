@@ -1,4 +1,5 @@
 export { TrustGate, EndUserAgentFactory, type ConnectOptions, type LLMEndpoint } from './client.js'
+export { whoAmI, selectConsumer, type KeyConsumer, type KeyIdentity } from './whoami.js'
 export { Agent, EndUserAgent, Toolkit, type ToolkitOptions } from './agent.js'
 export { type TrustGateConfig, API_KEY_HEADER, END_USER_HEADER } from './config.js'
 export { MCPTransport } from './mcp.js'

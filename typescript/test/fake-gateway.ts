@@ -1,8 +1,12 @@
 import type { GatewayTool } from '../src/types.js'
 
 export type FakeOptions = {
-	/** 'application' lists its own accounts; 'end_user' refuses to. */
+	/** Which actor /whoami reports for the MCP consumer. */
 	actor?: 'application' | 'end_user'
+	/** Overrides what /whoami answers, for the cases about resolving a key. */
+	whoami?: unknown
+	/** Answers /whoami with this status instead of 200. */
+	whoamiStatus?: number
 	connections?: { provider: string; status: string; account_ref?: string }[]
 	tools?: GatewayTool[]
 	/** Replies for tools/call, keyed by tool name. */
@@ -30,6 +34,28 @@ export function fakeGateway(options: FakeOptions = {}) {
 		const body = init?.body ? JSON.parse(String(init.body)) : undefined
 		requests.push({ url, method: init?.method ?? 'GET', headers, body })
 
+		if (url.endsWith('/whoami')) {
+			if (options.whoamiStatus) {
+				return json(options.whoamiStatus, { error: 'not_found', message: 'no route' })
+			}
+			return json(
+				200,
+				options.whoami ?? {
+					gateway: 'acme',
+					consumers: [
+						{
+							slug: 'acme',
+							name: 'Acme Agent',
+							type: 'MCP',
+							active: true,
+							url: 'https://gw.test/acme/mcp',
+							acts_for_users: options.actor === 'end_user',
+							...(options.actor === 'end_user' ? { identity_source: 'app' } : {}),
+						},
+					],
+				}
+			)
+		}
 		if (url.includes('/connections/links')) {
 			return json(201, {
 				connect_url: 'https://gw.test/acme/mcp/connect?ticket=t-1',
@@ -40,12 +66,6 @@ export function fakeGateway(options: FakeOptions = {}) {
 		}
 		if (url.includes('/connections')) {
 			const named = new URL(url).searchParams.get('end_user')
-			if (!named && options.actor === 'end_user') {
-				return json(409, {
-					error: 'consumer_acts_for_users',
-					message: 'consumer acts for its users, not as itself',
-				})
-			}
 			return json(200, {
 				end_user: named ?? '',
 				actor: named ? 'end_user' : 'application',

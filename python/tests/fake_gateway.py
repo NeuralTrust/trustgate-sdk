@@ -21,8 +21,12 @@ class Recorded:
 
 @dataclass
 class FakeGateway:
-    #: "application" lists its own accounts; "end_user" refuses to.
+    #: Which actor /whoami reports for the MCP consumer.
     actor: str = "application"
+    #: Overrides what /whoami answers, for the cases about resolving a key.
+    whoami: Any | None = None
+    #: Answers /whoami with this status instead of 200.
+    whoami_status: int = 0
     connections: list[dict[str, Any]] = field(
         default_factory=lambda: [{"provider": "com.notion/mcp", "status": "connected"}]
     )
@@ -49,6 +53,28 @@ class FakeGateway:
         decoded = json.loads(body) if body else None
         self.requests.append(Recorded(method=method, url=url, headers=dict(headers), body=decoded))
 
+        if url.endswith("/whoami"):
+            if self.whoami_status:
+                return _json(self.whoami_status, {"error": "not_found", "message": "no route"})
+            return _json(
+                200,
+                self.whoami
+                if self.whoami is not None
+                else {
+                    "gateway": "acme",
+                    "consumers": [
+                        {
+                            "slug": "acme",
+                            "name": "Acme Agent",
+                            "type": "MCP",
+                            "active": True,
+                            "url": "https://gw.test/acme/mcp",
+                            "acts_for_users": self.actor == "end_user",
+                            **({"identity_source": "app"} if self.actor == "end_user" else {}),
+                        }
+                    ],
+                },
+            )
         if "/connections/links" in url:
             return _json(
                 201,
@@ -61,14 +87,6 @@ class FakeGateway:
             )
         if "/connections" in url:
             named = parse_qs(urlparse(url).query).get("end_user", [None])[0]
-            if not named and self.actor == "end_user":
-                return _json(
-                    409,
-                    {
-                        "error": "consumer_acts_for_users",
-                        "message": "consumer acts for its users, not as itself",
-                    },
-                )
             return _json(
                 200,
                 {

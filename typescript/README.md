@@ -11,18 +11,21 @@ npm install @neuraltrust/trustgate
 ```ts
 import { TrustGate, ToolFormat } from '@neuraltrust/trustgate'
 
-const tg = new TrustGate({
-  baseUrl: process.env.TRUSTGATE_URL,        // https://gw.acme.ai
-  apiKey: process.env.TRUSTGATE_API_KEY,     // ag_…
-  mcpConsumer: process.env.TRUSTGATE_MCP_CONSUMER,
-  llmConsumer: process.env.TRUSTGATE_LLM_CONSUMER, // optional
-})
+const tg = new TrustGate()   // TRUSTGATE_URL + TRUSTGATE_API_KEY
 ```
 
-Every field falls back to the environment variable shown. The MCP consumer
-carries the tools; the LLM consumer fronts the models. They are different
-consumers because a consumer has one type — the same API key can be attached
-to both.
+Two values, or none if they are in the environment. The consumers behind the
+key are asked for: `tg.identity()` reads `GET /whoami` once and remembers it.
+
+```ts
+const { gateway, consumers } = await tg.identity()
+// [{ slug: 'support-agent', type: 'MCP', url: 'https://…/support-agent/mcp', actsForUsers: false },
+//  { slug: 'support-llm',   type: 'LLM', url: 'https://…/support-llm/v1' }]
+```
+
+`mcpConsumer` and `llmConsumer` (or `TRUSTGATE_MCP_CONSUMER` /
+`TRUSTGATE_LLM_CONSUMER`) are only needed when a key reaches two consumers of
+the same plane — the SDK names them and refuses rather than guessing.
 
 ## An agent that acts as itself
 
@@ -30,6 +33,7 @@ to both.
 const agent = await tg.connect({ requires: ['notion_search'] })
 
 agent.mcp                                   // { url, headers } for a framework
+await tg.llm()                              // { baseUrl, apiKey } for OpenAI/Anthropic
 agent.toolkit(ToolFormat.OpenAIResponses)   // { tools, execute, warnings }
 await agent.callTool('notion_search', { query: 'runbook' })
 await agent.refresh()                       // re-read the toolkit
@@ -76,6 +80,7 @@ strict asked for are stripped unless the tool's own schema accepts them.
 | `PolicyBlockedError` | a gateway policy refused the call |
 | `ToolNotFoundError` | the tool left the toolkit under a running agent |
 | `AppActorUnavailableError` / `EndUserActorUnavailableError` | wrong actor for this consumer |
+| `PlaneUnavailableError` | the key reaches no consumer of that plane |
 | `AuthenticationError`, `RateLimitedError`, `ServiceUnavailableError`, `TrustGateServerError` | as named |
 
 ## Development

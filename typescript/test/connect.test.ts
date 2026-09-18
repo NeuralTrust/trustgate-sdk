@@ -6,7 +6,7 @@ import { MissingToolsError, UpstreamNotConnectedError } from '../src/errors.js'
 import { END_USER_HEADER } from '../src/config.js'
 import { fakeGateway } from './fake-gateway.js'
 
-const base = { baseUrl: 'https://gw.test', apiKey: 'ag_secret', mcpConsumer: 'acme' }
+const base = { baseUrl: 'https://gw.test', apiKey: 'ag_secret' }
 
 describe('connect', () => {
 	it('gives an application acting as itself its tools', async () => {
@@ -99,16 +99,74 @@ describe('connect', () => {
 		expect(() => agent.forEndUser('user_123')).toThrow(/no end users/)
 	})
 
-	it('hands the LLM plane to a provider client without wrapping it', () => {
-		const tg = new TrustGate({ ...base, llmConsumer: 'acme-llm', fetch: fakeGateway().fetch })
+})
 
-		expect(tg.llm.baseUrl).toBe('https://gw.test/acme-llm/v1')
-		expect(tg.llm.apiKey).toBe('ag_secret')
+describe('resolving a key', () => {
+	const bothPlanes = {
+		gateway: 'acme',
+		consumers: [
+			{ slug: 'acme', type: 'MCP', active: true, url: 'https://gw.test/acme/mcp', acts_for_users: false },
+			{ slug: 'acme-llm', type: 'LLM', active: true, url: 'https://llm.test/acme-llm/v1' },
+		],
+	}
+
+	// The whole point: one secret in, both planes out. The LLM address is on
+	// another host, which no client could have composed from the MCP one.
+	it('finds both planes behind one key, with no slug configured', async () => {
+		const gateway = fakeGateway({ whoami: bothPlanes })
+		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
+
+		const agent = (await tg.connect()) as Agent
+		const llm = await tg.llm()
+
+		expect(agent.mcp.url).toBe('https://gw.test/acme/mcp')
+		expect(llm.baseUrl).toBe('https://llm.test/acme-llm/v1')
+		expect(llm.consumer).toBe('acme-llm')
+		expect(llm.apiKey).toBe('ag_secret')
 	})
 
-	it('says so when the key was never pointed at an LLM consumer', () => {
-		const tg = new TrustGate({ ...base, fetch: fakeGateway().fetch })
+	it('asks the key once, however many planes are read', async () => {
+		const gateway = fakeGateway({ whoami: bothPlanes })
+		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
 
-		expect(() => tg.llm).toThrow(/TRUSTGATE_LLM_CONSUMER/)
+		await tg.connect()
+		await tg.llm()
+		await tg.identity()
+
+		expect(gateway.requests.filter((r) => r.url.endsWith('/whoami'))).toHaveLength(1)
+	})
+
+	it('says so when the key reaches no consumer of that plane', async () => {
+		const gateway = fakeGateway({ whoami: { gateway: 'acme', consumers: [] } })
+		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
+
+		await expect(tg.connect()).rejects.toThrow(/reaches no MCP consumer/)
+	})
+
+	// Two consumers of a plane is a legitimate setup this SDK cannot resolve
+	// on its own; guessing would run the agent against the wrong surface.
+	it('asks which one when a key reaches two of a plane', async () => {
+		const gateway = fakeGateway({
+			whoami: {
+				gateway: 'acme',
+				consumers: [
+					{ slug: 'support', type: 'MCP', active: true, url: 'https://gw.test/support/mcp' },
+					{ slug: 'billing', type: 'MCP', active: true, url: 'https://gw.test/billing/mcp' },
+				],
+			},
+		})
+		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
+
+		await expect(tg.connect()).rejects.toThrow(/several MCP consumers \(support, billing\)/)
+
+		const named = new TrustGate({ ...base, mcpConsumer: 'billing', fetch: gateway.fetch })
+		expect(((await named.connect()) as Agent).mcp.url).toBe('https://gw.test/billing/mcp')
+	})
+
+	it('names a gateway too old to answer for a key', async () => {
+		const gateway = fakeGateway({ whoamiStatus: 404 })
+		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
+
+		await expect(tg.connect()).rejects.toThrow(/does not serve \/whoami/)
 	})
 })

@@ -14,7 +14,7 @@ from trustgate.config import END_USER_HEADER
 
 from .fake_gateway import FakeGateway
 
-BASE = dict(base_url="https://gw.test", api_key="ag_secret", mcp_consumer="acme")
+BASE = dict(base_url="https://gw.test", api_key="ag_secret")
 
 
 def client(gateway: FakeGateway, **overrides) -> TrustGate:
@@ -109,16 +109,71 @@ def test_rejects_an_empty_end_user() -> None:
         handle.for_end_user("   ")
 
 
-def test_hands_the_llm_plane_to_a_provider_client_without_wrapping_it() -> None:
-    tg = client(FakeGateway(), llm_consumer="acme-llm")
+BOTH_PLANES = {
+    "gateway": "acme",
+    "consumers": [
+        {"slug": "acme", "type": "MCP", "active": True, "url": "https://gw.test/acme/mcp",
+         "acts_for_users": False},
+        {"slug": "acme-llm", "type": "LLM", "active": True, "url": "https://llm.test/acme-llm/v1"},
+    ],
+}
 
-    assert tg.llm.base_url == "https://gw.test/acme-llm/v1"
-    assert tg.llm.api_key == "ag_secret"
+
+# The whole point: one secret in, both planes out. The LLM address is on
+# another host, which no client could have composed from the MCP one.
+def test_finds_both_planes_behind_one_key() -> None:
+    tg = client(FakeGateway(whoami=BOTH_PLANES))
+
+    agent = tg.connect()
+    llm = tg.llm()
+
+    assert agent.mcp.url == "https://gw.test/acme/mcp"
+    assert llm.base_url == "https://llm.test/acme-llm/v1"
+    assert llm.consumer == "acme-llm"
+    assert llm.api_key == "ag_secret"
 
 
-def test_says_so_when_the_key_was_never_pointed_at_an_llm_consumer() -> None:
-    with pytest.raises(PlaneUnavailableError, match="TRUSTGATE_LLM_CONSUMER"):
-        _ = client(FakeGateway()).llm
+def test_asks_the_key_once_however_many_planes_are_read() -> None:
+    gateway = FakeGateway(whoami=BOTH_PLANES)
+    tg = client(gateway)
+
+    tg.connect()
+    tg.llm()
+    tg.identity()
+
+    assert len([r for r in gateway.requests if r.url.endswith("/whoami")]) == 1
+
+
+def test_says_so_when_the_key_reaches_no_consumer_of_that_plane() -> None:
+    tg = client(FakeGateway(whoami={"gateway": "acme", "consumers": []}))
+
+    with pytest.raises(PlaneUnavailableError, match="reaches no MCP consumer"):
+        tg.connect()
+
+
+# Two consumers of a plane is a legitimate setup this SDK cannot resolve on
+# its own; guessing would run the agent against the wrong surface.
+def test_asks_which_one_when_a_key_reaches_two_of_a_plane() -> None:
+    gateway = FakeGateway(
+        whoami={
+            "gateway": "acme",
+            "consumers": [
+                {"slug": "support", "type": "MCP", "active": True, "url": "https://gw.test/support/mcp"},
+                {"slug": "billing", "type": "MCP", "active": True, "url": "https://gw.test/billing/mcp"},
+            ],
+        }
+    )
+
+    with pytest.raises(Exception, match=r"several MCP consumers \(support, billing\)"):
+        client(gateway).connect()
+
+    named = client(gateway, mcp_consumer="billing")
+    assert named.connect().mcp.url == "https://gw.test/billing/mcp"
+
+
+def test_names_a_gateway_too_old_to_answer_for_a_key() -> None:
+    with pytest.raises(Exception, match="does not serve /whoami"):
+        client(FakeGateway(whoami_status=404)).connect()
 
 
 def test_end_user_can_read_its_connections_and_mint_a_link() -> None:

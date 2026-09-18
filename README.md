@@ -53,17 +53,32 @@ to make the call.
 `AnthropicMessages`, `Gemini` — because translating is only ever needed on that
 path.
 
+## One secret, nothing else
+
+```ts
+const tg = new TrustGate({ baseUrl: 'https://gw.acme.ai', apiKey: 'ag_…' })
+```
+
+That is the whole configuration. The consumers behind a key were created by an
+admin, in the console, and their slugs never travelled with the key — so the
+gateway is asked: `GET /whoami` answers with the consumers this key reaches and
+the address of each. Name a slug only when a key reaches two consumers of the
+same plane, which the SDK will not guess at.
+
 ## The LLM plane
 
 If the gateway also fronts your models, the same key configures the provider's
-own client. Nothing is wrapped: wrapping would mean chasing every change
-OpenAI and Anthropic make, and breaking streaming on the way.
+own client — including its base URL, which lives on a different host from the
+MCP one and is the thing no client could work out for itself.
 
 ```ts
-const openai = new OpenAI({ baseURL: tg.llm.baseUrl, apiKey: tg.llm.apiKey })
+const llm = await tg.llm()
+const openai = new OpenAI({ baseURL: llm.baseUrl, apiKey: llm.apiKey })
 ```
 
-Models and tools, one key, both governed.
+Nothing is wrapped: wrapping would mean chasing every change OpenAI and
+Anthropic make, and breaking streaming on the way. Models and tools, one key,
+both governed.
 
 ## What `connect()` proves before anything runs
 
@@ -119,9 +134,10 @@ are written against the same cases.
 
 ## Requirements
 
-A TrustGate gateway that serves the application-actor form of
-`GET /{slug}/connections`. The SDK uses it to tell the two actors apart, and
-says so plainly if the gateway predates it.
+A TrustGate gateway that serves `GET /whoami` and the application-actor form
+of `GET /{slug}/connections`. The first is how the SDK resolves a key into its
+consumers; the second is the batch preflight. It says so plainly if the gateway
+predates either.
 
 ## License
 

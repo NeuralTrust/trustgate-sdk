@@ -1,24 +1,17 @@
-"""The entry point: one gateway, one API key, two planes."""
+"""The entry point: a gateway and a key, and everything else is asked for."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from urllib.parse import quote
 
 from .agent import Agent, EndUserAgent, end_user_agent
 from .config import API_KEY_HEADER, Config, resolve_config
 from .connections import list_connections
-from .errors import (
-    AppActorUnavailableError,
-    InvalidRequestError,
-    MissingToolsError,
-    PlaneUnavailableError,
-    TrustGateError,
-    UpstreamNotConnectedError,
-)
+from .errors import MissingToolsError, UpstreamNotConnectedError
 from .mcp import MCPTransport
 from .transport import Transport, UrllibTransport
-from .types import CONNECTED, Actor, Connection, GatewayTool
+from .types import CONNECTED, Actor, GatewayTool
+from .whoami import KeyConsumer, KeyIdentity, select_consumer, who_am_i
 
 
 @dataclass(frozen=True)
@@ -29,6 +22,8 @@ class LLMEndpoint:
     base_url: str
     api_key: str
     headers: dict[str, str]
+    #: The consumer behind it, for logs and for error messages.
+    consumer: str
 
 
 class EndUserAgentFactory:
@@ -45,28 +40,33 @@ class EndUserAgentFactory:
         self,
         config: Config,
         transport: Transport,
-        slug: str,
-        url: str,
+        consumer: KeyConsumer,
         tools: list[GatewayTool],
     ) -> None:
         self._config = config
         self._transport = transport
-        self.slug = slug
-        self._url = url
+        self._consumer = consumer
         #: The toolkit, which is the same for every user of this application.
         self.tools = tools
 
+    @property
+    def slug(self) -> str:
+        return self._consumer.slug
+
     def for_end_user(self, end_user: str) -> EndUserAgent:
-        return end_user_agent(self._config, self._transport, self.slug, end_user, self._url, self.tools)
+        return end_user_agent(
+            self._config, self._transport, self._consumer.slug, end_user, self._consumer.url, self.tools
+        )
 
 
 class TrustGate:
-    """One gateway, one API key, two planes.
+    """A gateway and a key, and everything else is asked for.
 
     The key is attached to consumers, and a consumer has one type - so the
-    tools live behind an MCP consumer and the models behind an LLM one. The
-    same key may be attached to both, which is what lets a single client hand
-    out both halves of an agent.
+    tools live behind an MCP consumer and the models behind an LLM one. Their
+    slugs were chosen by whoever created them, and the two planes do not share
+    a host, so neither is something a caller should have to carry: the gateway
+    is asked once, at ``connect()``, and answers both.
     """
 
     def __init__(
@@ -80,8 +80,18 @@ class TrustGate:
     ) -> None:
         self._config = resolve_config(base_url, api_key, mcp_consumer, llm_consumer, timeout)
         self._transport = transport or UrllibTransport()
+        self._identity: KeyIdentity | None = None
 
-    @property
+    def identity(self) -> KeyIdentity:
+        """What this key reaches.
+
+        Read once and remembered: it is a property of the key, and a
+        long-lived process should not re-ask on every call.
+        """
+        if self._identity is None:
+            self._identity = who_am_i(self._config, self._transport)
+        return self._identity
+
     def llm(self) -> LLMEndpoint:
         """The LLM plane, ready for a provider's own SDK.
 
@@ -89,21 +99,15 @@ class TrustGate:
         clients - it points them somewhere else. Wrapping would mean chasing
         every change they make and breaking streaming on the way.
         """
-        slug = self._config.llm_consumer
-        if not slug:
-            raise PlaneUnavailableError(
-                "no LLM consumer configured; pass llm_consumer or set TRUSTGATE_LLM_CONSUMER"
-            )
+        consumer = select_consumer(
+            self.identity(), "LLM", self._config.llm_consumer, "llm_consumer"
+        )
         return LLMEndpoint(
-            base_url=f"{self._config.base_url}/{quote(slug)}/v1",
+            base_url=consumer.url,
             api_key=self._config.api_key,
             headers={API_KEY_HEADER: self._config.api_key},
+            consumer=consumer.slug,
         )
-
-    @property
-    def mcp_url(self) -> str:
-        """The MCP endpoint, for a framework that brings its own client."""
-        return f"{self._config.base_url}/{quote(self._mcp_slug())}/mcp"
 
     def connect(self, requires: list[str] | None = None) -> Agent | EndUserAgentFactory:
         """Opens the agent's surface and proves it is usable before anything runs.
@@ -115,9 +119,10 @@ class TrustGate:
         accounts are signed in. That last one has no runtime remedy: nobody is
         present to open a connect link once a batch is going.
         """
-        slug = self._mcp_slug()
-        actor, connections = self._probe_actor(slug)
-        transport = MCPTransport(self._config, self._transport, self.mcp_url)
+        consumer = select_consumer(
+            self.identity(), "MCP", self._config.mcp_consumer, "mcp_consumer"
+        )
+        transport = MCPTransport(self._config, self._transport, consumer.url)
         tools = transport.list_tools()
 
         names = {tool.name for tool in tools}
@@ -125,40 +130,24 @@ class TrustGate:
         if missing:
             raise MissingToolsError(missing, sorted(names))
 
-        if actor is Actor.END_USER:
-            return EndUserAgentFactory(self._config, self._transport, slug, self.mcp_url, tools)
+        # The consumer says which actor it is, so there is nothing to infer and
+        # nothing for the caller to configure wrongly.
+        if consumer.acts_for_users:
+            return EndUserAgentFactory(self._config, self._transport, consumer, tools)
 
+        connections = list_connections(self._config, self._transport, consumer.slug)
         pending = [c for c in connections if c.status != CONNECTED]
         if pending:
             raise UpstreamNotConnectedError(
-                [c.provider for c in pending],
-                f"{self._config.base_url}/{quote(slug)}/connect",
+                [c.provider for c in pending], _connect_page(consumer)
             )
-        return Agent(self._config, self._transport, slug, transport, tools, connections)
+        return Agent(
+            self._config, self._transport, consumer.slug, transport, tools, connections
+        )
 
-    def _probe_actor(self, slug: str) -> tuple[Actor, list[Connection]]:
-        """Asks the gateway which actor this consumer is, by asking it something
-        only one of the two can answer.
 
-        An application that acts as itself has upstream accounts and lists them;
-        one that acts for its users has none of its own and says so, with a
-        conflict rather than an empty list. So the refusal is the answer.
-        """
-        try:
-            return Actor.APPLICATION, list_connections(self._config, self._transport, slug)
-        except AppActorUnavailableError:
-            return Actor.END_USER, []
-        except InvalidRequestError as error:
-            raise TrustGateError(
-                "this gateway cannot report an application actor's own connections, so the SDK "
-                "cannot tell which actor the consumer is. Upgrade the gateway, or use the MCP "
-                "endpoint directly with TrustGate.mcp_url."
-            ) from error
-
-    def _mcp_slug(self) -> str:
-        slug = self._config.mcp_consumer
-        if not slug:
-            raise PlaneUnavailableError(
-                "no MCP consumer configured; pass mcp_consumer or set TRUSTGATE_MCP_CONSUMER"
-            )
-        return slug
+def _connect_page(consumer: KeyConsumer) -> str:
+    """The page an operator opens to sign the application in to its own accounts."""
+    if consumer.url.endswith("/mcp"):
+        return consumer.url[: -len("/mcp")] + "/connect"
+    return consumer.url

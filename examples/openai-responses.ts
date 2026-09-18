@@ -7,6 +7,7 @@
 import OpenAI from 'openai'
 import { ToolFormat, TrustGate, MissingToolsError, UpstreamNotConnectedError } from '@neuraltrust/trustgate'
 
+// One secret: the gateway resolves which consumers this key reaches.
 const tg = new TrustGate()
 
 const agent = await tg.connect({ requires: ['notion_search'] }).catch((error) => {
@@ -20,7 +21,8 @@ const agent = await tg.connect({ requires: ['notion_search'] }).catch((error) =>
 })
 
 // Models through the gateway too, so the whole agent is governed by one key.
-const openai = new OpenAI({ baseURL: tg.llm.baseUrl, apiKey: tg.llm.apiKey })
+const llm = await tg.llm()
+const openai = new OpenAI({ baseURL: llm.baseUrl, apiKey: llm.apiKey })
 
 const { tools, execute, warnings } = agent.toolkit(ToolFormat.OpenAIResponses, { strict: true })
 for (const warning of warnings) {
