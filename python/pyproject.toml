@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "trustgate"
+version = "0.1.0"
+description = "TrustGate SDK - governed tools and models for agents, over the MCP and LLM planes of a TrustGate gateway."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "NeuralTrust" }]
+keywords = ["mcp", "agents", "llm", "gateway", "trustgate"]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/NeuralTrust/trustgate-sdk"
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/trustgate"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
