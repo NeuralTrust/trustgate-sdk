@@ -10,6 +10,7 @@ values — your gateway and one API key — from a `.env` you copy from the
 
 | | What it shows |
 |---|---|
+| `python/whoami.py` | What one key reaches, and which of these examples fits it — run this first when something is off |
 | `python/batch.py` | A nightly job: everything that could stop it is checked before the first row, because nobody is there to open a connect link |
 | `python/end_user_agent.py` | An assistant that names one of its users per call, and turns "not connected" into a link to show them |
 | `typescript/openai-responses.ts` | Tools translated for the Responses API and run back through the gateway — no MCP client in sight |
@@ -35,9 +36,16 @@ so no slug and no second URL travel into your configuration.
 # Python — uv builds the SDK from ../../python
 cd python
 cp .env.example .env      # then fill it in
+uv run whoami.py
 uv run batch.py
 uv run end_user_agent.py user_123 "what changed in the runbook this week?"
 ```
+
+An application that acts as itself is `batch.py`; one that names its own users
+is `end_user_agent.py`. The consumer decides which, not the caller, and
+`whoami.py` prints the answer — so "this application acts for its own end
+users" from `batch.py` means the key is that other kind, whatever the console
+tab you were last looking at.
 
 ```sh
 # TypeScript — npm links the SDK from ../../typescript
