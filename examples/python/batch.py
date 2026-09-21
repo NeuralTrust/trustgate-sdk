@@ -20,9 +20,14 @@ from trustgate import (
 
 from _config import gateway_env
 
-# Replace with the tools your application actually carries. The names are the
-# server's own, as its Routing tab lists them.
+# Replace with the tools your application actually carries: these two are a
+# placeholder, and a gateway that serves neither is the expected first run. The
+# names are the servers' own - the Routing tab lists them, and so does the error
+# this raises.
 REQUIRED_TOOLS = ["notion_search", "linear_create_issue"]
+# The tool the loop below spends its batches on. One of REQUIRED_TOOLS, so the
+# preflight has already proved it is there.
+SEARCH_TOOL = REQUIRED_TOOLS[0]
 BATCHES = 3
 
 log = logging.getLogger("batch")
@@ -36,7 +41,9 @@ def main() -> None:
     try:
         agent = tg.connect(requires=REQUIRED_TOOLS)
     except MissingToolsError as error:
-        sys.exit(f"this application cannot run: its toolkit is missing {error.missing}")
+        # The error names what the toolkit does carry, which is what turns this
+        # from a dead end into the list to put in REQUIRED_TOOLS.
+        sys.exit(f"this application cannot run: {error}")
     except UpstreamNotConnectedError as error:
         sys.exit(
             f"this application has not signed in to {error.providers}: open {error.connect_url}"
@@ -65,7 +72,7 @@ def main() -> None:
             log.error("stopping: %s went away mid-run", [c.provider for c in pending])
             break
 
-        result = agent.call_tool("notion_search", {"query": f"incidents week {batch}"})
+        result = agent.call_tool(SEARCH_TOOL, {"query": f"incidents week {batch}"})
         log.info(
             "batch %s: %s", batch, result.get("structuredContent") or result.get("content")
         )
