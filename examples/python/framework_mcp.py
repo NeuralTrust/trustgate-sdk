@@ -61,7 +61,7 @@ async def main() -> None:
 
     tg = TrustGate()
     try:
-        handle = tg.connect(requires=REQUIRES)
+        application = tg.connect(requires=REQUIRES)
     except MissingToolsError as error:
         sys.exit(f"this application cannot run: {error}")
     except UpstreamNotConnectedError as error:
@@ -71,7 +71,7 @@ async def main() -> None:
     except TrustGateError as error:
         sys.exit(f"could not reach the gateway: {error}")
 
-    if isinstance(handle, EndUserAgentFactory):
+    if isinstance(application, EndUserAgentFactory):
         sys.exit(
             "this application acts for its own end users, so it has no surface of its own - "
             "name one with for_end_user() before handing it to a framework."
@@ -79,7 +79,7 @@ async def main() -> None:
 
     # The whole handover: a URL the SDK has already proved reachable, and the
     # headers that authenticate it. The framework does the rest of MCP.
-    endpoint = handle.mcp
+    endpoint = application.mcp
     toolset = MCPToolset(StreamableHttpTransport(endpoint.url, headers=endpoint.headers))
 
     agent = Agent(

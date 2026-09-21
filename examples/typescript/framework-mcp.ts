@@ -19,9 +19,9 @@ const QUESTION = 'what do I do when the ingest queue backs up?'
 gatewayEnv()
 
 const tg = new TrustGate()
-const handle = await tg.connect({ requires: REQUIRES }).catch(fail)
+const application = await tg.connect({ requires: REQUIRES }).catch(fail)
 
-if (!('mcp' in handle)) {
+if (!('mcp' in application)) {
 	fail(
 		'this application acts for end users, so it has no surface of its own — ' +
 			'name one with await forEndUser() before handing it to a framework.'
@@ -37,8 +37,8 @@ process.env.OPENAI_BASE_URL = llm.baseUrl
 setDefaultOpenAIKey(llm.apiKey)
 
 const server = new MCPServerStreamableHttp({
-	url: handle.mcp.url,
-	requestInit: { headers: handle.mcp.headers },
+	url: application.mcp.url,
+	requestInit: { headers: application.mcp.headers },
 })
 await server.connect()
 

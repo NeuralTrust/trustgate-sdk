@@ -29,11 +29,11 @@ const [endUser = DEFAULT_USER, question = DEFAULT_QUESTION] = process.argv.slice
 gatewayEnv()
 
 const tg = new TrustGate()
-const handle = await tg.connect().catch(fail)
+const factory = await tg.connect().catch(fail)
 
 // The consumer decides this, not the caller: only an application that names its
 // own users has end users this key can speak for.
-if (!(handle instanceof EndUserAgentFactory)) {
+if (!(factory instanceof EndUserAgentFactory)) {
 	fail(
 		'this application acts as itself, so it has no end users to answer for — ' +
 			'see openai-responses.ts for that shape.'
@@ -42,7 +42,7 @@ if (!(handle instanceof EndUserAgentFactory)) {
 
 // Awaits because the toolkit is read here: such an application has no surface of
 // its own to read it from, so the first named user reads it and the rest share.
-const user = await handle.forEndUser(endUser).catch(fail)
+const user = await factory.forEndUser(endUser).catch(fail)
 
 // A user who has connected nothing is not an error here, it is a link to show
 // them. The gateway does offer each unconnected server as a trustgate_connect_*

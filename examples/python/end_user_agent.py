@@ -22,17 +22,20 @@ from trustgate import (
 from _config import gateway_env, require
 
 MODEL = "claude-opus-5"
-DEFAULT_USER = "user_123"
-DEFAULT_QUESTION = "find the incident runbook and summarise it"
+DEFAULT_USER = "viktor.manuel.garcia@gmail.com"
+DEFAULT_QUESTION = "find the last issues in Linear"
 # A turn is one model call and the tools it asks for. A handful is enough for
 # an answer, and a bound means a model that keeps calling stops on its own.
-MAX_TURNS = 6
+MAX_TURNS = 10
 
 
-def answer(handle, client: "anthropic.Anthropic", user_id: str, question: str) -> str:
-    # The handle has no surface of its own: every call belongs to one user, and
-    # the toolkit is read as the first one named rather than as the application.
-    user = handle.for_end_user(user_id)
+def answer(
+    factory: EndUserAgentFactory, client: "anthropic.Anthropic", user_id: str, question: str
+) -> str:
+    # connect() returns a factory: it has no surface of its own. Every call
+    # belongs to one user, and the toolkit is read as the first one named
+    # rather than as the application.
+    user = factory.for_end_user(user_id)
     toolkit = user.toolkit(ToolFormat.ANTHROPIC_MESSAGES)
 
     # A user who has connected nothing is not an error here, it is a link to
@@ -94,20 +97,20 @@ def main() -> None:
 
     tg = TrustGate()
     try:
-        handle = tg.connect()  # EndUserAgentFactory: no surface without a user
+        factory = tg.connect()
     except TrustGateError as error:
         sys.exit(f"could not reach the gateway: {error}")
 
     # The consumer decides this, not the caller: only an application that names
     # its own users has end users this key can speak for.
-    if not isinstance(handle, EndUserAgentFactory):
+    if not isinstance(factory, EndUserAgentFactory):
         sys.exit(
             "this application acts as itself, so it has no end users to answer for - "
             "see batch.py for that shape."
         )
     client = anthropic.Anthropic(api_key=api_key)
 
-    print(answer(handle, client, user_id, question))
+    print(answer(factory, client, user_id, question))
 
 
 if __name__ == "__main__":
