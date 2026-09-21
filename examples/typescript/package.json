@@ -3,10 +3,13 @@
   "private": true,
   "type": "module",
   "description": "Runnable TrustGate SDK examples.",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
-    "openai": "node --experimental-strip-types --env-file-if-exists=.env openai-responses.ts",
-    "framework": "node --experimental-strip-types --env-file-if-exists=.env framework-mcp.ts"
+    "build:sdk": "npm --prefix ../../typescript run build",
+    "openai": "npm run build:sdk && node --experimental-strip-types --env-file-if-exists=.env openai-responses.ts",
+    "framework": "npm run build:sdk && node --experimental-strip-types --env-file-if-exists=.env framework-mcp.ts"
   },
   "dependencies": {
     "@neuraltrust/trustgate": "file:../../typescript",

@@ -10,7 +10,9 @@ dependencies = [
     "anthropic>=0.40",
 ]
 
-# The SDK is not on PyPI yet, so the examples build it from this repository.
-# Swap this block for a version pin once it is published.
+# The SDK is not on PyPI yet, so the examples take it from this repository.
+# Editable on purpose: a non-editable path install is built once and cached
+# against the version, so editing the SDK and re-running would keep running the
+# build from before. Swap this block for a version pin once it is published.
 [tool.uv.sources]
-trustgate = { path = "../../python" }
+trustgate = { path = "../../python", editable = true }

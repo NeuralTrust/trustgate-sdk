@@ -34,8 +34,14 @@ so no slug and no second URL travel into your configuration.
 
 ## Running them
 
+Both projects take the SDK from this repository rather than from a registry,
+and both are wired so a change in it reaches the next run: `uv` installs the
+Python SDK editable, and the npm scripts rebuild the TypeScript one first. If an
+example ever behaves like a version you have already changed, that is what went
+wrong — `uv sync --reinstall-package trustgate` forces it.
+
 ```sh
-# Python — uv builds the SDK from ../../python
+# Python — uv installs the SDK editable from ../../python
 cd python
 cp .env.example .env      # then fill it in
 uv run whoami.py
@@ -50,7 +56,7 @@ users" from `batch.py` means the key is that other kind, whatever the console
 tab you were last looking at.
 
 ```sh
-# TypeScript — npm links the SDK from ../../typescript
+# TypeScript — npm links the SDK from ../../typescript and rebuilds it per run
 cd typescript
 cp .env.example .env      # then fill it in
 npm install
