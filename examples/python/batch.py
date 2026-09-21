@@ -15,7 +15,9 @@ same audit, same per-application credentials. It never sees a token.
 
 import json
 import logging
+import shutil
 import sys
+import textwrap
 
 from trustgate import (
     EndUserAgentFactory,
@@ -43,9 +45,14 @@ QUEUE_ARGUMENTS: dict = {}
 # directly it is Anthropic's own.
 MODEL = "claude-haiku-4-5-20251001"
 QUESTION = (
-    "Does this issue need a human tonight, or can it wait for the morning? "
-    "Look up anything you need. Answer in one line: WAIT or TONIGHT, then why."
+    "Does this issue need a human tonight, or can it wait for the morning?\n"
+    "Look up whatever you need first.\n"
+    "Then answer in one line, plain text: the word TONIGHT or WAIT, an em dash, "
+    "and one sentence of reason. No markdown, no second paragraph."
 )
+# What the answer is allowed to be. Longest first, so no verdict is read as the
+# prefix of another.
+VERDICTS = ("TONIGHT", "WAIT")
 MAX_ISSUES = 5
 # One model call and the tools it asks for. A bound means an issue that sends
 # the model round in circles costs one issue rather than the whole run.
@@ -73,7 +80,7 @@ def queue(agent) -> list[dict]:
 
 
 def verdict(agent, client, issue: dict) -> str:
-    """One issue, judged — with the whole toolkit available to judge it."""
+    """One issue, judged - with the whole toolkit available to judge it."""
     toolkit = agent.toolkit(ToolFormat.ANTHROPIC_MESSAGES)
     messages: list[dict] = [
         {"role": "user", "content": f"{QUESTION}\n\n{json.dumps(issue, separators=(',', ':'))}"}
@@ -81,7 +88,7 @@ def verdict(agent, client, issue: dict) -> str:
 
     for _ in range(MAX_TURNS):
         message = client.messages.create(
-            model=MODEL, max_tokens=512, tools=toolkit.tools, messages=messages
+            model=MODEL, max_tokens=300, tools=toolkit.tools, messages=messages
         )
         outputs = toolkit.execute(message)
         if not outputs:
@@ -92,6 +99,36 @@ def verdict(agent, client, issue: dict) -> str:
         messages.extend(outputs)
 
     return f"(no verdict after {MAX_TURNS} turns)"
+
+
+def split_verdict(answer: str) -> tuple[str, str]:
+    """The call and the reason, out of whatever the model actually wrote.
+
+    It is asked for one plain line and mostly gives one, but a model told to be
+    brief still reaches for bold and paragraphs - and a digest that reprints
+    "**WAIT**" and four sentences is not a digest.
+    """
+    flat = " ".join(answer.replace("*", " ").replace("#", " ").split())
+    for name in VERDICTS:
+        if flat.upper().startswith(name):
+            return name, flat[len(name):].lstrip(" -–—:,.").strip()
+    return "?", flat
+
+
+def render(issue: dict, answer: str, width: int) -> str:
+    """One issue as two lines: the call and the title, then the reason under it."""
+    call, reason = split_verdict(answer)
+    name = str(issue.get("id") or issue.get("identifier") or "?")
+    title = " ".join(str(issue.get("title") or "").split())
+
+    head = f"  {call:<{len(max(VERDICTS, key=len))}}  {name}"
+    if title:
+        head += "  " + textwrap.shorten(title, max(20, width - len(head) - 2), placeholder="…")
+    indent = " " * (len(max(VERDICTS, key=len)) + 4)
+    body = textwrap.fill(
+        reason, width=max(40, width), initial_indent=indent, subsequent_indent=indent
+    )
+    return f"{head}\n{body}" if reason else head
 
 
 def model_client(tg: TrustGate):
@@ -118,7 +155,11 @@ def model_client(tg: TrustGate):
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    # The run's own lines are the output; an HTTP log line per model call is
+    # someone else's debugging, and there is one for every turn of every issue.
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    for noisy in ("httpx", "httpcore", "anthropic"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
     gateway_env()
 
     tg = TrustGate()
@@ -147,21 +188,30 @@ def main() -> None:
         )
 
     client = model_client(tg)
-    log.info("running as %s over %d tools", agent.slug, len(agent.tools))
-
     issues = queue(agent)
-    log.info("%d issues in the queue", len(issues))
+    width = min(shutil.get_terminal_size((88, 20)).columns, 100)
 
+    print()
+    print(f"  triage · {agent.slug} · {len(agent.tools)} tools · {len(issues)} issues")
+    print()
+
+    calls: list[str] = []
     for issue in issues:
         # An account can be revoked mid-run, so a long job re-reads between rows
         # rather than finding out on the call that fails.
         pending = [c for c in agent.refresh_connections() if c.status != "connected"]
         if pending:
-            log.error("stopping: %s went away mid-run", [c.provider for c in pending])
+            log.error("  stopping: %s went away mid-run", [c.provider for c in pending])
             break
 
-        name = issue.get("id") or issue.get("identifier") or "?"
-        print(f"{name}: {verdict(agent, client, issue)}")
+        answer = verdict(agent, client, issue)
+        calls.append(split_verdict(answer)[0])
+        print(render(issue, answer, width))
+        print()
+
+    tonight = calls.count("TONIGHT")
+    print(f"  {tonight} tonight, {len(calls) - tonight} can wait.")
+    print()
 
 
 if __name__ == "__main__":
