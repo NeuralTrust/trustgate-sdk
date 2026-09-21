@@ -183,6 +183,25 @@ def test_answers_anthropic_with_one_user_message_of_tool_results() -> None:
     assert outputs[0]["content"][0]["tool_use_id"] == "toolu_1"
 
 
+# "Nothing to send back" is how a caller knows the model is done, and every
+# format has to be able to say it. Anthropic refuses a user message with no
+# content, so a wrapper around no results is a turn that cannot be sent - the
+# loop reads it as more work and the next request is a 400.
+@pytest.mark.parametrize(
+    "tool_format, answer",
+    [
+        (ToolFormat.ANTHROPIC_MESSAGES, {"content": [{"type": "text", "text": "here you go"}]}),
+        (ToolFormat.GEMINI, {"candidates": [{"content": {"parts": [{"text": "here you go"}]}}]}),
+        (ToolFormat.OPENAI_RESPONSES, {"output": [{"type": "message"}]}),
+        (ToolFormat.OPENAI_CHAT, {"choices": [{"message": {"content": "here you go"}}]}),
+    ],
+)
+def test_sends_nothing_back_when_the_model_called_nothing(tool_format, answer) -> None:
+    agent, _ = agent_with()
+
+    assert agent.toolkit(tool_format).execute(answer) == []
+
+
 def test_pairs_a_gemini_call_with_its_answer() -> None:
     agent, _ = agent_with()
 

@@ -192,6 +192,12 @@ class AnthropicMessagesAdapter(FormatAdapter):
         return calls
 
     def to_outputs(self, results: list[ToolResult]) -> list[Any]:
+        # No results means the model called nothing, and that is what an empty
+        # list says. A message wrapped around no blocks says the opposite - and
+        # Anthropic refuses a user message with no content, so the turn a caller
+        # reads as "keep going" is the one that cannot be sent.
+        if not results:
+            return []
         blocks = []
         for item in results:
             block: dict[str, Any] = {
@@ -270,6 +276,9 @@ class GeminiAdapter(FormatAdapter):
         return calls
 
     def to_outputs(self, results: list[ToolResult]) -> list[Any]:
+        # Empty means the model called nothing; see AnthropicMessagesAdapter.
+        if not results:
+            return []
         return [
             {
                 "role": "user",

@@ -304,3 +304,26 @@ describe('the executor survives being destructured', () => {
 		expect(JSON.stringify(gateway.requests.at(-1)?.body)).toContain('notion_search')
 	})
 })
+
+describe('a turn the model ended without calling anything', () => {
+	// "Nothing to send back" is how a caller knows the model is done, and every
+	// format has to be able to say it. Anthropic refuses a user message with no
+	// content, so a wrapper around no results is a turn that cannot be sent — the
+	// loop reads it as more work and the next request is a 400.
+	const answers: [ToolFormat, unknown][] = [
+		[ToolFormat.AnthropicMessages, { content: [{ type: 'text', text: 'here you go' }] }],
+		[ToolFormat.Gemini, { candidates: [{ content: { parts: [{ text: 'here you go' }] } }] }],
+		[ToolFormat.OpenAIResponses, { output: [{ type: 'message' }] }],
+		[ToolFormat.OpenAIChat, { choices: [{ message: { content: 'here you go' } }] }],
+	]
+
+	for (const [format, answer] of answers) {
+		it(`sends nothing back for ${format}`, async () => {
+			const gateway = fakeGateway({})
+			const tg = new TrustGate({ ...base, fetch: gateway.fetch })
+			const agent = (await tg.connect()) as Agent
+
+			expect(await agent.toolkit(format).execute(answer)).toEqual([])
+		})
+	}
+})
