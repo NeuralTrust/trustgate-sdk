@@ -5,9 +5,12 @@ description = "Runnable TrustGate SDK examples."
 requires-python = ">=3.10"
 dependencies = [
     "trustgate",
-    # Both Python examples call a model: batch.py to judge each row, and
-    # end_user_agent.py to answer one user.
+    # batch.py judges each row with a model, end_user_agent.py answers one user.
     "anthropic>=0.40",
+    # framework_mcp.py hands the endpoint to a framework that speaks MCP itself.
+    # Any of them would do; this one is a single dependency with a native
+    # streamable-HTTP client.
+    "pydantic-ai-slim[mcp,openai]>=2.46",
 ]
 
 # The SDK is not on PyPI yet, so the examples take it from this repository.

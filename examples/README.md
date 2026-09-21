@@ -13,9 +13,20 @@ values — your gateway and one API key — from a `.env` you copy from the
 | `python/whoami.py`, `typescript/whoami.ts` | What one key reaches, and which of these examples fits it — run this first when something is off |
 | `python/batch.py` | A nightly triage run: a model judges each row with the whole toolkit to look things up with, and everything that could stop the job is checked before the first one |
 | `python/end_user_agent.py` | An assistant that names one of its users per call, and turns "not connected" into a link to show them |
+| `python/framework_mcp.py` | The same consumer handed to a framework that brings its own MCP client — no tool list, no execution loop |
 | `typescript/openai-responses.ts` | Tools translated for the Responses API and run back through the gateway — no MCP client in sight |
 | `typescript/end-user-agent.ts` | The same shape as `end_user_agent.py`, against the Responses API |
 | `typescript/framework-mcp.ts` | The same consumer handed to a framework that brings its own MCP client |
+
+There are two ways to spend a consumer, and both are here in both languages.
+**Translate the tools** when you call a model provider's API directly and there
+is no MCP client anywhere — the SDK lists them, converts them to that provider's
+dialect and runs the calls (`batch.py`, `end_user_agent.py`,
+`openai-responses.ts`, `end-user-agent.ts`). **Hand over the endpoint** when your
+framework already speaks MCP — then all the SDK contributes is a checked URL and
+its headers, and the framework lists and calls for itself (`framework_mcp.py`,
+`framework-mcp.ts`). The second is the shorter path when you already have a
+framework; the first is the only one when you do not.
 
 The TypeScript examples send their model calls through the gateway too, so
 neither file holds an OpenAI key, and so does `batch.py` when the key it runs on
@@ -48,6 +59,7 @@ cp .env.example .env      # then fill it in
 uv run whoami.py
 uv run batch.py
 uv run end_user_agent.py user_123 "what changed in the runbook this week?"
+uv run framework_mcp.py
 ```
 
 An application that acts as itself is `batch.py`; one that names its own users
