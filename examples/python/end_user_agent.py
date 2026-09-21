@@ -35,9 +35,16 @@ def answer(handle, client: "anthropic.Anthropic", user_id: str, question: str) -
     user = handle.for_end_user(user_id)
     toolkit = user.toolkit(ToolFormat.ANTHROPIC_MESSAGES)
 
-    # A user who has connected nothing is not an error here: the gateway offers
-    # each unconnected server as a trustgate_connect_* tool, so the model can
-    # fetch the link itself - but only if it gets another turn to call it in.
+    # A user who has connected nothing is not an error here, it is a link to
+    # show them. The gateway does offer each unconnected server as a
+    # trustgate_connect_* tool, but a model with nothing else it can call tends
+    # to announce the links rather than fetch them - and the program can see the
+    # same thing for itself, without spending a turn finding out.
+    accounts = user.connections()
+    pending = [account for account in accounts if account.status != "connected"]
+    if accounts and len(pending) == len(accounts):
+        return _connect_links(user, pending)
+
     messages: list[dict] = [{"role": "user", "content": question}]
     for _ in range(MAX_TURNS):
         message = client.messages.create(
@@ -61,6 +68,18 @@ def answer(handle, client: "anthropic.Anthropic", user_id: str, question: str) -
         messages.extend(outputs)
 
     return f"stopped after {MAX_TURNS} turns without a final answer"
+
+
+def _connect_links(user, pending) -> str:
+    """One link per server this user has not signed in to.
+
+    Minted here rather than stored: each one carries a ticket that expires, so
+    it is worth exactly as much as the moment it is shown in.
+    """
+    lines = ["No account is connected for this user, so nothing can run yet. Open these:"]
+    for account in pending:
+        lines.append(f"  {account.provider}: {user.connect_link(account.provider).connect_url}")
+    return "\n".join(lines)
 
 
 def main() -> None:
