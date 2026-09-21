@@ -8,7 +8,9 @@
   },
   "scripts": {
     "build:sdk": "npm --prefix ../../typescript run build",
+    "whoami": "npm run build:sdk && node --experimental-strip-types --env-file-if-exists=.env whoami.ts",
     "openai": "npm run build:sdk && node --experimental-strip-types --env-file-if-exists=.env openai-responses.ts",
+    "end-user": "npm run build:sdk && node --experimental-strip-types --env-file-if-exists=.env end-user-agent.ts",
     "framework": "npm run build:sdk && node --experimental-strip-types --env-file-if-exists=.env framework-mcp.ts"
   },
   "dependencies": {

@@ -10,10 +10,11 @@ values — your gateway and one API key — from a `.env` you copy from the
 
 | | What it shows |
 |---|---|
-| `python/whoami.py` | What one key reaches, and which of these examples fits it — run this first when something is off |
+| `python/whoami.py`, `typescript/whoami.ts` | What one key reaches, and which of these examples fits it — run this first when something is off |
 | `python/batch.py` | A nightly triage run: a model judges each row with the whole toolkit to look things up with, and everything that could stop the job is checked before the first one |
 | `python/end_user_agent.py` | An assistant that names one of its users per call, and turns "not connected" into a link to show them |
 | `typescript/openai-responses.ts` | Tools translated for the Responses API and run back through the gateway — no MCP client in sight |
+| `typescript/end-user-agent.ts` | The same shape as `end_user_agent.py`, against the Responses API |
 | `typescript/framework-mcp.ts` | The same consumer handed to a framework that brings its own MCP client |
 
 The TypeScript examples send their model calls through the gateway too, so
@@ -60,7 +61,9 @@ tab you were last looking at.
 cd typescript
 cp .env.example .env      # then fill it in
 npm install
+npm run whoami
 npm run openai
+npm run end-user -- user_123 "what changed in the runbook this week?"
 npm run framework
 ```
 
