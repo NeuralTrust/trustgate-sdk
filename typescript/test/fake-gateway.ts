@@ -18,6 +18,8 @@ export type FakeOptions = {
 	frameAsEventStream?: boolean
 }
 
+const END_USER_HEADER = 'X-NeuralTrust-End-User'
+
 export type Recorded = { url: string; method: string; headers: Record<string, string>; body?: unknown }
 
 export function fakeGateway(options: FakeOptions = {}) {
@@ -73,6 +75,12 @@ export function fakeGateway(options: FakeOptions = {}) {
 			})
 		}
 		if (url.endsWith('/mcp')) {
+			// An app-identified consumer refuses any request that names no user,
+			// tools/list included — which is why there is no listing to be had as
+			// the application itself.
+			if (options.actor === 'end_user' && !headers[END_USER_HEADER]) {
+				return json(400, { error: `invalid end user: ${END_USER_HEADER} header is required` })
+			}
 			const rpc = body as { id: number; method: string; params: Record<string, unknown> }
 			if (rpc.method === 'tools/list') {
 				return rpcOK(rpc.id, { tools }, false)

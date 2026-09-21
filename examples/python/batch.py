@@ -10,7 +10,13 @@ the upstream accounts it will need.
 import logging
 import sys
 
-from trustgate import MissingToolsError, TrustGate, TrustGateError, UpstreamNotConnectedError
+from trustgate import (
+    EndUserAgentFactory,
+    MissingToolsError,
+    TrustGate,
+    TrustGateError,
+    UpstreamNotConnectedError,
+)
 
 from _config import gateway_env
 
@@ -39,6 +45,15 @@ def main() -> None:
         # A wrong URL or a key the gateway does not know lands here. Said as a
         # sentence, because a traceback is not what a first run needs.
         sys.exit(f"could not reach the gateway: {error}")
+
+    # A batch runs as the application. An application that names its own users
+    # has no such actor - there is nobody for a nightly job to be - so this is
+    # the wrong program for it, and saying so beats failing on the first call.
+    if isinstance(agent, EndUserAgentFactory):
+        sys.exit(
+            "this application acts for its own end users, so it has no accounts of its "
+            "own for a batch to run on - see end_user_agent.py for that shape."
+        )
 
     log.info("running as %s", agent.slug)
 

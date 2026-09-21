@@ -1,7 +1,12 @@
 import { Agent, EndUserAgent, endUserAgent } from './agent.js'
 import { API_KEY_HEADER, resolveConfig, type ResolvedConfig, type TrustGateConfig } from './config.js'
 import { listConnections } from './connections.js'
-import { MissingToolsError, TrustGateError, UpstreamNotConnectedError } from './errors.js'
+import {
+	EndUserActorUnavailableError,
+	MissingToolsError,
+	TrustGateError,
+	UpstreamNotConnectedError,
+} from './errors.js'
 import { MCPTransport } from './mcp.js'
 import { Actor, type GatewayTool } from './types.js'
 import { selectConsumer, whoAmI, type KeyConsumer, type KeyIdentity } from './whoami.js'
@@ -88,6 +93,15 @@ export class TrustGate {
 	async connect(options: ConnectOptions = {}): Promise<Agent | EndUserAgentFactory> {
 		const identity = await this.identity(options.signal)
 		const consumer = selectConsumer(identity, 'MCP', this.config.mcpConsumer, 'mcpConsumer')
+
+		// An application that names its own users has no surface of its own to
+		// ask on: every request to it must say which user it is for, and one
+		// that does not is refused. So there is nothing to list here, and the
+		// preflight moves to the first named user.
+		if (consumer.identitySource === 'app') {
+			return new EndUserAgentFactory(this.config, consumer, undefined, options.requires ?? [])
+		}
+
 		const transport = new MCPTransport(this.config, consumer.url)
 		const tools = await transport.listTools(options.signal)
 		const missing = missingTools(tools, options.requires ?? [])
@@ -96,9 +110,16 @@ export class TrustGate {
 		}
 
 		// The consumer says which actor it is, so there is nothing to infer and
-		// nothing for the caller to configure wrongly.
+		// nothing for the caller to configure wrongly. What is left here acting
+		// for users signs them in itself, and this key is not one of them: the
+		// end-user header means nothing on such a consumer, so a handle minted
+		// from it would quietly run every user as the application.
 		if (consumer.actsForUsers) {
-			return new EndUserAgentFactory(this.config, consumer, tools)
+			throw new EndUserActorUnavailableError(
+				`"${consumer.slug}" signs its users in itself, so an API key cannot act for ` +
+					'one of them. A key reaches this consumer as the application, which is ' +
+					'not who its calls are supposed to be for.'
+			)
 		}
 
 		const connections = await listConnections(this.config, consumer.slug, undefined, options.signal)
@@ -126,16 +147,50 @@ export class EndUserAgentFactory {
 	constructor(
 		private readonly config: ResolvedConfig,
 		private readonly consumer: KeyConsumer,
-		/** The toolkit, which is the same for every user of this application. */
-		readonly tools: GatewayTool[]
+		private listed: GatewayTool[] | undefined,
+		private readonly requires: string[] = []
 	) {}
 
 	get slug(): string {
 		return this.consumer.slug
 	}
 
-	forEndUser(endUser: string): EndUserAgent {
-		return endUserAgent(this.config, this.consumer.slug, endUser, this.consumer.url, this.tools)
+	/** The toolkit, which is the same for every user of this application. */
+	get tools(): GatewayTool[] {
+		if (!this.listed) {
+			throw new TrustGateError(
+				'this application names its own users, so its toolkit cannot be read without ' +
+					'being one of them: await forEndUser(…) and read it from the handle.'
+			)
+		}
+		return this.listed
+	}
+
+	/**
+	 * The handle for one named user.
+	 *
+	 * It awaits because the toolkit is read here: it is the same for every user,
+	 * but the endpoint refuses a request that names none, so the first handle
+	 * reads it and the rest share it. The `requires` check `connect()` could not
+	 * run lands here for the same reason.
+	 */
+	async forEndUser(endUser: string, signal?: AbortSignal): Promise<EndUserAgent> {
+		const agent = endUserAgent(
+			this.config,
+			this.consumer.slug,
+			endUser,
+			this.consumer.url,
+			this.listed ?? []
+		)
+		if (!this.listed) {
+			const tools = await agent.refresh(signal)
+			const missing = missingTools(tools, this.requires)
+			if (missing.length > 0) {
+				throw new MissingToolsError(missing, tools.map((tool) => tool.name))
+			}
+			this.listed = tools
+		}
+		return agent
 	}
 }
 

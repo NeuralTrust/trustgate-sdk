@@ -44,7 +44,7 @@ agent.connections                           // its own upstream accounts
 
 ```ts
 const handle = await tg.connect()           // EndUserAgentFactory
-const alice = handle.forEndUser('user_123')
+const alice = await handle.forEndUser('user_123')
 
 await alice.connections()
 await alice.connectLink('com.notion/mcp')
@@ -52,7 +52,9 @@ alice.toolkit(ToolFormat.AnthropicMessages)
 ```
 
 Each user needs their own handle: the MCP endpoint fixes its headers when a
-client connects, and the user travels in one.
+client connects, and the user travels in one. `forEndUser` awaits because the
+toolkit is read here — such an application has no surface of its own to read it
+from, so the first named user reads it and the rest share it.
 
 ## The provider's types
 

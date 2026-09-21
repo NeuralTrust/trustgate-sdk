@@ -113,7 +113,8 @@ export class MCPTransport {
 		const rpc = parseRPCResponse(text, id)
 		if (!rpc) {
 			throw new TrustGateError(
-				`MCP ${method} returned no JSON-RPC response (HTTP ${response.status})`,
+				`MCP ${method} returned no JSON-RPC response (HTTP ${response.status})` +
+					whatItSaid(text),
 				{ status: response.status }
 			)
 		}
@@ -174,4 +175,29 @@ function errorForRPC(error: RPCError): TrustGateError {
 		default:
 			return new TrustGateError(error.message, { code: String(error.code) })
 	}
+}
+
+/**
+ * The reason the endpoint gave, when it did not give it in JSON-RPC.
+ *
+ * A plain HTTP error — a missing header, a path that is no virtual MCP — says
+ * why in its body, and dropping that leaves a status code to guess from.
+ */
+function whatItSaid(text: string): string {
+	let said = (text ?? '').split(/\s+/).filter(Boolean).join(' ')
+	try {
+		const body: unknown = JSON.parse(text)
+		if (body && typeof body === 'object') {
+			for (const key of ['error', 'message', 'detail']) {
+				const value = (body as Record<string, unknown>)[key]
+				if (typeof value === 'string' && value.trim()) {
+					said = value.trim()
+					break
+				}
+			}
+		}
+	} catch {
+		// Not JSON. The whitespace-collapsed body is the best there is.
+	}
+	return said ? `: ${said.slice(0, 200)}` : ''
 }

@@ -63,6 +63,10 @@ alice.connect_link("com.notion/mcp")
 alice.toolkit(ToolFormat.ANTHROPIC_MESSAGES)
 ```
 
+Such an application has no surface of its own, so there is nothing for
+`connect()` to read: the toolkit — and with it the `requires` check — is read as
+the first user named, and the rest share it.
+
 ## The model call, with tools
 
 ```python

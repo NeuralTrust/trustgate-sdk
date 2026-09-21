@@ -101,7 +101,8 @@ class MCPTransport:
         rpc = parse_rpc_response(response.text, request_id)
         if rpc is None:
             raise TrustGateError(
-                f"MCP {method} returned no JSON-RPC response (HTTP {response.status})",
+                f"MCP {method} returned no JSON-RPC response (HTTP {response.status})"
+                f"{_what_it_said(response.text)}",
                 status=response.status,
             )
         if "error" in rpc:
@@ -136,6 +137,26 @@ def parse_rpc_response(text: str, request_id: int) -> dict[str, Any] | None:
         if isinstance(frame, dict) and frame.get("id") == request_id:
             return frame
     return None
+
+
+def _what_it_said(text: str) -> str:
+    """The reason the endpoint gave, when it did not give it in JSON-RPC.
+
+    A plain HTTP error - a missing header, a path that is no virtual MCP - says
+    why in its body, and dropping that leaves a status code to guess from.
+    """
+    said = " ".join((text or "").split())
+    try:
+        body = json.loads(text)
+    except ValueError:
+        body = None
+    if isinstance(body, dict):
+        for key in ("error", "message", "detail"):
+            value = body.get(key)
+            if isinstance(value, str) and value.strip():
+                said = value.strip()
+                break
+    return f": {said[:200]}" if said else ""
 
 
 def _error_for_rpc(error: dict[str, Any]) -> TrustGateError:

@@ -10,6 +10,8 @@ from urllib.parse import parse_qs, urlparse
 from trustgate.transport import Response
 from trustgate.types import GatewayTool
 
+END_USER_HEADER = "X-NeuralTrust-End-User"
+
 
 @dataclass
 class Recorded:
@@ -96,6 +98,14 @@ class FakeGateway:
                 },
             )
         if url.endswith("/mcp"):
+            # An app-identified consumer refuses any request that names no user,
+            # tools/list included - which is why there is no listing to be had
+            # as the application itself.
+            if self.actor == "end_user" and not headers.get(END_USER_HEADER):
+                return _json(
+                    400,
+                    {"error": f"invalid end user: {END_USER_HEADER} header is required"},
+                )
             rpc = decoded or {}
             if rpc.get("method") == "tools/list":
                 return self._rpc(rpc["id"], {"tools": [_tool_json(t) for t in self.tools]}, False)

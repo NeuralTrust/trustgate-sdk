@@ -102,6 +102,55 @@ def test_refuses_to_name_a_user_on_an_application_that_acts_as_itself() -> None:
         agent.for_end_user("user_123")
 
 
+# The endpoint refuses a request that names no user, tools/list included, so an
+# application that names its own users has nothing connect() can ask it. Asking
+# anyway is a 400 that no caller can act on.
+def test_connects_to_an_app_identified_consumer_without_asking_as_the_application() -> None:
+    gateway = FakeGateway(actor="end_user")
+
+    handle = client(gateway).connect()
+
+    assert not [r for r in gateway.requests if r.url.endswith("/mcp")]
+    alice = handle.for_end_user("user_123")
+    assert [tool.name for tool in alice.tools] == ["notion_search"]
+    assert [tool.name for tool in handle.tools] == ["notion_search"]
+
+
+# The check connect() makes for an application acting as itself still happens -
+# it just cannot happen until there is a user to ask as.
+def test_checks_required_tools_on_the_first_named_user() -> None:
+    handle = client(FakeGateway(actor="end_user")).connect(requires=["linear_create_issue"])
+
+    with pytest.raises(MissingToolsError) as caught:
+        handle.for_end_user("user_123")
+
+    assert caught.value.missing == ["linear_create_issue"]
+
+
+def test_says_the_toolkit_needs_a_user_before_one_is_named() -> None:
+    handle = client(FakeGateway(actor="end_user")).connect()
+
+    with pytest.raises(Exception, match="call for_end_user"):
+        handle.tools
+
+
+# Its users arrive with their own logins, and the end-user header means nothing
+# on such a consumer - a handle minted from an API key would run all of them as
+# the application, on the application's own accounts.
+def test_refuses_to_act_for_users_who_sign_in_for_themselves() -> None:
+    gateway = FakeGateway(whoami={
+        "gateway": "acme",
+        "consumers": [{
+            "slug": "acme", "type": "MCP", "active": True,
+            "url": "https://gw.test/acme/mcp",
+            "acts_for_users": True, "identity_source": "platform",
+        }],
+    })
+
+    with pytest.raises(Exception, match="signs its users in itself"):
+        client(gateway).connect()
+
+
 def test_rejects_an_empty_end_user() -> None:
     handle = client(FakeGateway(actor="end_user")).connect()
 

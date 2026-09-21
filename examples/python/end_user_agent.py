@@ -11,7 +11,13 @@ import sys
 
 import anthropic
 
-from trustgate import ConsentRequiredError, ToolFormat, TrustGate, TrustGateError
+from trustgate import (
+    ConsentRequiredError,
+    EndUserAgentFactory,
+    ToolFormat,
+    TrustGate,
+    TrustGateError,
+)
 
 from _config import gateway_env, require
 
@@ -21,7 +27,8 @@ DEFAULT_QUESTION = "find the incident runbook and summarise it"
 
 
 def answer(handle, client: "anthropic.Anthropic", user_id: str, question: str) -> str:
-    # The handle has no surface of its own: every call belongs to one user.
+    # The handle has no surface of its own: every call belongs to one user, and
+    # the toolkit is read as the first one named rather than as the application.
     user = handle.for_end_user(user_id)
     toolkit = user.toolkit(ToolFormat.ANTHROPIC_MESSAGES)
 
@@ -70,6 +77,14 @@ def main() -> None:
         handle = tg.connect()  # EndUserAgentFactory: no surface without a user
     except TrustGateError as error:
         sys.exit(f"could not reach the gateway: {error}")
+
+    # The consumer decides this, not the caller: only an application that names
+    # its own users has end users this key can speak for.
+    if not isinstance(handle, EndUserAgentFactory):
+        sys.exit(
+            "this application acts as itself, so it has no end users to answer for - "
+            "see batch.py for that shape."
+        )
     client = anthropic.Anthropic(api_key=api_key)
 
     print(answer(handle, client, user_id, question))

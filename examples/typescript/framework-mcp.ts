@@ -24,7 +24,7 @@ const handle = await tg.connect({ requires: REQUIRES }).catch(fail)
 if (!('mcp' in handle)) {
 	fail(
 		'this application acts for end users, so it has no surface of its own — ' +
-			'name one with forEndUser() before handing it to a framework.'
+			'name one with await forEndUser() before handing it to a framework.'
 	)
 }
 

@@ -7,7 +7,12 @@ from dataclasses import dataclass
 from .agent import Agent, EndUserAgent, end_user_agent
 from .config import API_KEY_HEADER, Config, resolve_config
 from .connections import list_connections
-from .errors import MissingToolsError, UpstreamNotConnectedError
+from .errors import (
+    EndUserActorUnavailableError,
+    MissingToolsError,
+    TrustGateError,
+    UpstreamNotConnectedError,
+)
 from .mcp import MCPTransport
 from .transport import Transport, UrllibTransport
 from .types import CONNECTED, Actor, GatewayTool
@@ -41,22 +46,48 @@ class EndUserAgentFactory:
         config: Config,
         transport: Transport,
         consumer: KeyConsumer,
-        tools: list[GatewayTool],
+        tools: list[GatewayTool] | None,
+        requires: list[str] | None = None,
     ) -> None:
         self._config = config
         self._transport = transport
         self._consumer = consumer
-        #: The toolkit, which is the same for every user of this application.
-        self.tools = tools
+        self._tools = tools
+        self._requires = list(requires or [])
 
     @property
     def slug(self) -> str:
         return self._consumer.slug
 
+    @property
+    def tools(self) -> list[GatewayTool]:
+        """The toolkit, which is the same for every user of this application."""
+        if self._tools is None:
+            raise TrustGateError(
+                "this application names its own users, so its toolkit cannot be read "
+                "without being one of them: call for_end_user(...) and read it from the "
+                "handle."
+            )
+        return self._tools
+
     def for_end_user(self, end_user: str) -> EndUserAgent:
-        return end_user_agent(
-            self._config, self._transport, self._consumer.slug, end_user, self._consumer.url, self.tools
+        agent = end_user_agent(
+            self._config,
+            self._transport,
+            self._consumer.slug,
+            end_user,
+            self._consumer.url,
+            self._tools or [],
         )
+        if self._tools is None:
+            # The toolkit is the same for every user, but the endpoint refuses a
+            # request that names none - so the first handle reads it, the rest
+            # share it, and the `requires` check connect() could not run lands
+            # here instead.
+            tools = agent.refresh()
+            _check_requires(tools, self._requires)
+            self._tools = tools
+        return agent
 
 
 class TrustGate:
@@ -122,18 +153,31 @@ class TrustGate:
         consumer = select_consumer(
             self.identity(), "MCP", self._config.mcp_consumer, "mcp_consumer"
         )
+
+        # An application that names its own users has no surface of its own to
+        # ask on: every request to it must say which user it is for, and one
+        # that does not is refused. So there is nothing to list here, and the
+        # preflight moves to the first named user.
+        if consumer.identity_source == "app":
+            return EndUserAgentFactory(
+                self._config, self._transport, consumer, None, list(requires or [])
+            )
+
         transport = MCPTransport(self._config, self._transport, consumer.url)
         tools = transport.list_tools()
-
-        names = {tool.name for tool in tools}
-        missing = [name for name in (requires or []) if name not in names]
-        if missing:
-            raise MissingToolsError(missing, sorted(names))
+        _check_requires(tools, list(requires or []))
 
         # The consumer says which actor it is, so there is nothing to infer and
-        # nothing for the caller to configure wrongly.
+        # nothing for the caller to configure wrongly. What is left here acting
+        # for users signs them in itself, and this key is not one of them: the
+        # end-user header means nothing on such a consumer, so a handle minted
+        # from it would quietly run every user as the application.
         if consumer.acts_for_users:
-            return EndUserAgentFactory(self._config, self._transport, consumer, tools)
+            raise EndUserActorUnavailableError(
+                f'"{consumer.slug}" signs its users in itself, so an API key cannot act '
+                "for one of them. A key reaches this consumer as the application, which "
+                "is not who its calls are supposed to be for."
+            )
 
         connections = list_connections(self._config, self._transport, consumer.slug)
         pending = [c for c in connections if c.status != CONNECTED]
@@ -144,6 +188,14 @@ class TrustGate:
         return Agent(
             self._config, self._transport, consumer.slug, transport, tools, connections
         )
+
+
+def _check_requires(tools: list[GatewayTool], requires: list[str]) -> None:
+    """The tools an agent was written around, checked before anything runs."""
+    names = {tool.name for tool in tools}
+    missing = [name for name in requires if name not in names]
+    if missing:
+        raise MissingToolsError(missing, sorted(names))
 
 
 def _connect_page(consumer: KeyConsumer) -> str:

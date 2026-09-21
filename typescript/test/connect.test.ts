@@ -81,7 +81,7 @@ describe('connect', () => {
 		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
 		const handle = (await tg.connect()) as EndUserAgentFactory
 
-		const alice = handle.forEndUser('user_123')
+		const alice = await handle.forEndUser('user_123')
 		await alice.callTool('notion_search', { query: 'runbook' })
 
 		expect(alice.mcp.headers[END_USER_HEADER]).toBe('user_123')
@@ -99,6 +99,62 @@ describe('connect', () => {
 		expect(() => agent.forEndUser('user_123')).toThrow(/no end users/)
 	})
 
+	// The endpoint refuses a request that names no user, tools/list included, so
+	// an application that names its own users has nothing connect() can ask it.
+	// Asking anyway is a 400 that no caller can act on.
+	it('connects to an app-identified consumer without asking as the application', async () => {
+		const gateway = fakeGateway({ actor: 'end_user' })
+		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
+
+		const handle = (await tg.connect()) as EndUserAgentFactory
+
+		expect(gateway.requests.filter((r) => r.url.endsWith('/mcp'))).toHaveLength(0)
+		const alice = await handle.forEndUser('user_123')
+		expect(alice.tools.map((tool) => tool.name)).toEqual(['notion_search'])
+		expect(handle.tools.map((tool) => tool.name)).toEqual(['notion_search'])
+	})
+
+	// The check connect() makes for an application acting as itself still
+	// happens — it just cannot happen until there is a user to ask as.
+	it('checks required tools on the first named user', async () => {
+		const gateway = fakeGateway({ actor: 'end_user' })
+		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
+		const handle = (await tg.connect({ requires: ['linear_create_issue'] })) as EndUserAgentFactory
+
+		await expect(handle.forEndUser('user_123')).rejects.toThrow(/linear_create_issue/)
+	})
+
+	it('says the toolkit needs a user before one is named', async () => {
+		const gateway = fakeGateway({ actor: 'end_user' })
+		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
+		const handle = (await tg.connect()) as EndUserAgentFactory
+
+		expect(() => handle.tools).toThrow(/forEndUser/)
+	})
+
+	// Its users arrive with their own logins, and the end-user header means
+	// nothing on such a consumer — a handle minted from an API key would run all
+	// of them as the application, on the application's own accounts.
+	it('refuses to act for users who sign in for themselves', async () => {
+		const gateway = fakeGateway({
+			whoami: {
+				gateway: 'acme',
+				consumers: [
+					{
+						slug: 'acme',
+						type: 'MCP',
+						active: true,
+						url: 'https://gw.test/acme/mcp',
+						acts_for_users: true,
+						identity_source: 'platform',
+					},
+				],
+			},
+		})
+		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
+
+		await expect(tg.connect()).rejects.toThrow(/signs its users in itself/)
+	})
 })
 
 describe('resolving a key', () => {

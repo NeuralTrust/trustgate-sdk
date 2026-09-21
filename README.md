@@ -116,7 +116,7 @@ to one named user.
 
 ```ts
 const handle = await tg.connect()
-const alice = handle.forEndUser('user_123')
+const alice = await handle.forEndUser('user_123')
 
 try {
   await alice.toolkit(ToolFormat.OpenAIResponses).execute(response.output)
