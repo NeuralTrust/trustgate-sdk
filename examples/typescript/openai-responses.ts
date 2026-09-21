@@ -21,6 +21,9 @@ import { fail, gatewayEnv } from './config.ts'
 const REQUIRES = ['notion_search']
 const MODEL = 'gpt-5.2'
 const QUESTION = 'find the incident runbook and summarise it'
+// A turn is one model call and the tools it asks for. A handful is enough for
+// an answer, and a bound means a model that keeps calling stops on its own.
+const MAX_TURNS = 6
 
 gatewayEnv()
 
@@ -66,7 +69,10 @@ let response = await openai.responses.create({
 	input: [{ role: 'user', content: QUESTION }],
 })
 
-while (response.output.some((item) => item.type === 'function_call')) {
+for (let turn = 1; response.output.some((item) => item.type === 'function_call'); turn++) {
+	if (turn >= MAX_TURNS) {
+		fail(`stopped after ${MAX_TURNS} turns without a final answer`)
+	}
 	response = await openai.responses.create({
 		model: MODEL,
 		tools,
