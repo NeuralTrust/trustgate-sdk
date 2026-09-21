@@ -245,3 +245,62 @@ describe('errors from a tool call', () => {
 		expect(result).toMatchObject({ content: [{ type: 'text', text: 'called notion_search' }] })
 	})
 })
+
+/**
+ * `tools` is documented as something you pass straight to the provider's API,
+ * which only holds if the type says so. It used to be `unknown[]`, and every
+ * caller cast at the boundary — a gap the SDK's own tests could not see,
+ * because nothing in here had a provider's types to be assignable to.
+ *
+ * These stand in for them. The assertions are the compiler's: `npm run
+ * typecheck` covers `test/`, so a return to `unknown[]` fails the build.
+ */
+describe('the toolkit carries the provider types it is given', () => {
+	/** Shaped like OpenAI's `Responses.Tool`, without the dependency. */
+	type ProviderTool = { type: 'function'; name: string; parameters: unknown }
+	type ProviderOutput = { type: 'function_call_output'; call_id: string; output: string }
+
+	it('hands back the named type, with no cast at the call site', async () => {
+		const { agent } = await agentWith({})
+
+		const { tools, execute } = agent.toolkit<ProviderTool, ProviderOutput>(
+			ToolFormat.OpenAIResponses
+		)
+
+		// Assignable without a cast — which is the whole assertion.
+		const forTheProvider: ProviderTool[] = tools
+		expect(forTheProvider.map((tool) => tool.name)).toContain('notion_search')
+
+		const outputs: ProviderOutput[] = await execute([
+			{ type: 'function_call', call_id: 'call-1', name: 'notion_search', arguments: '{}' },
+		])
+		expect(outputs[0]?.type).toBe('function_call_output')
+	})
+
+	// Naming nothing still works; it is only the promise about `tools` that
+	// weakens, which is why the parameters default rather than being required.
+	it('defaults to unknown when the caller names no types', async () => {
+		const { agent } = await agentWith({})
+
+		const { tools } = agent.toolkit(ToolFormat.OpenAIResponses)
+
+		expect(Array.isArray(tools)).toBe(true)
+	})
+})
+
+// The documented shape is `const { tools, execute } = agent.toolkit(…)`, and an
+// unbound method loses the format it reads on the first call — so every example
+// in this repo would have thrown on its first tool call.
+describe('the executor survives being destructured', () => {
+	it('runs a call after being taken off the toolkit', async () => {
+		const { agent, gateway } = await agentWith({})
+		const { execute } = agent.toolkit(ToolFormat.OpenAIResponses)
+
+		const outputs = await execute([
+			{ type: 'function_call', call_id: 'call-1', name: 'notion_search', arguments: '{}' },
+		])
+
+		expect(outputs).toHaveLength(1)
+		expect(JSON.stringify(gateway.requests.at(-1)?.body)).toContain('notion_search')
+	})
+})

@@ -49,27 +49,29 @@ if (!('toolkit' in agent)) {
 const llm = await tg.llm().catch(fail)
 const openai = new OpenAI({ baseURL: llm.baseUrl, apiKey: llm.apiKey })
 
-const { tools, execute, warnings } = agent.toolkit(ToolFormat.OpenAIResponses, { strict: true })
-
-// The toolkit is format-agnostic, so it hands back `unknown[]` — the provider's
-// own types live here, in the caller's project, not in the SDK.
-const openaiTools = tools as OpenAI.Responses.Tool[]
+// The provider's types are named here, in the caller's project: the SDK carries
+// no dependency on any of them, so `tools` and the executor's output come back
+// as whatever this line says they are.
+const { tools, execute, warnings } = agent.toolkit<
+	OpenAI.Responses.Tool,
+	OpenAI.Responses.ResponseInputItem
+>(ToolFormat.OpenAIResponses, { strict: true })
 for (const warning of warnings) {
 	console.warn(`${warning.tool} is not under strict mode: ${warning.reason}`)
 }
 
 let response = await openai.responses.create({
 	model: MODEL,
-	tools: openaiTools,
+	tools,
 	input: [{ role: 'user', content: QUESTION }],
 })
 
 while (response.output.some((item) => item.type === 'function_call')) {
 	response = await openai.responses.create({
 		model: MODEL,
-		tools: openaiTools,
+		tools,
 		previous_response_id: response.id,
-		input: (await execute(response.output)) as OpenAI.Responses.ResponseInput,
+		input: await execute(response.output),
 	})
 }
 

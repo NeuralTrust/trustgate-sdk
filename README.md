@@ -32,7 +32,10 @@ in the picture, so the SDK lists the tools, translates them into that
 provider's function-calling dialect, and runs the calls:
 
 ```ts
-const { tools, execute } = agent.toolkit(ToolFormat.OpenAIResponses)
+const { tools, execute } = agent.toolkit<
+  OpenAI.Responses.Tool,
+  OpenAI.Responses.ResponseInputItem
+>(ToolFormat.OpenAIResponses)
 
 let res = await openai.responses.create({ model: 'gpt-5.2', tools, input })
 while (res.output.some((o) => o.type === 'function_call')) {
@@ -48,6 +51,10 @@ while (res.output.some((o) => o.type === 'function_call')) {
 Every one of those calls still goes through the gateway, so policy, audit and
 per-user credentials stay where they were. Your process only decides *whether*
 to make the call.
+
+The provider's own types are named at the call, in your project: the SDK
+depends on no provider package, so `tools` and the executor's output are
+whatever that line says they are, and nothing needs a cast.
 
 `ToolFormat` names providers, not frameworks — `OpenAIResponses`, `OpenAIChat`,
 `AnthropicMessages`, `Gemini` — because translating is only ever needed on that

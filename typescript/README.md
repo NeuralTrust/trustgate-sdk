@@ -54,6 +54,24 @@ alice.toolkit(ToolFormat.AnthropicMessages)
 Each user needs their own handle: the MCP endpoint fixes its headers when a
 client connects, and the user travels in one.
 
+## The provider's types
+
+```ts
+const { tools, execute } = agent.toolkit<
+  OpenAI.Responses.Tool,
+  OpenAI.Responses.ResponseInputItem
+>(ToolFormat.OpenAIResponses)
+```
+
+`toolkit<Tool, Output>()` names the two types the provider cares about: what
+`tools` is, and what `execute()` hands back to it. Both default to `unknown`,
+so naming them is what lets `tools` go straight into `openai.responses.create`
+without a cast. The SDK depends on no provider package — the types come from
+yours.
+
+`tools` and `execute` are safe to destructure; the executor stays bound to the
+format it was made with.
+
 ## Strict mode
 
 ```ts

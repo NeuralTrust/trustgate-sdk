@@ -20,17 +20,38 @@ export type ToolkitOptions = {
  *
  * They travel together because they are two halves of one translation: what
  * `tools` added on the way out, `execute` has to undo on the way back.
+ *
+ * `Tool` and `Output` are the provider's own types, named by the caller:
+ *
+ * ```ts
+ * const { tools, execute } = agent.toolkit<
+ *   OpenAI.Responses.Tool,
+ *   OpenAI.Responses.ResponseInputItem
+ * >(ToolFormat.OpenAIResponses)
+ * ```
+ *
+ * They default to `unknown`, so nothing breaks by leaving them out — but then
+ * "pass this straight to the provider's API" is a promise the type does not
+ * keep, and the caller casts at the boundary. The SDK cannot name them itself:
+ * it carries no dependency on any provider's package, which is what lets one
+ * install serve all of them.
  */
-export class Toolkit {
+export class Toolkit<Tool = unknown, Output = unknown> {
 	constructor(
 		/** Pass this straight to the provider's API. */
-		readonly tools: unknown[],
+		readonly tools: Tool[],
 		/** Tools whose schema could not be expressed in the requested dialect. */
 		readonly warnings: ConversionWarning[],
 		private readonly format: ToolFormat,
 		private readonly originals: Map<string, JSONSchema>,
 		private readonly transport: MCPTransport
-	) {}
+	) {
+		// Bound, because the documented way to use this is to destructure it —
+		// `const { tools, execute } = agent.toolkit(…)` — and an unbound method
+		// loses the format it needs the moment it is called that way.
+		this.calls = this.calls.bind(this)
+		this.execute = this.execute.bind(this)
+	}
 
 	/** The calls the model asked for, read out of the provider's response. */
 	calls(output: unknown): ToolCall[] {
@@ -44,7 +65,7 @@ export class Toolkit {
 	 * upstream credentials stay where they were. The caller's process only
 	 * decides whether to make the call at all.
 	 */
-	async execute(output: unknown, signal?: AbortSignal): Promise<unknown[]> {
+	async execute(output: unknown, signal?: AbortSignal): Promise<Output[]> {
 		const adapter = adapterFor(this.format)
 		const calls = adapter.extractCalls(output)
 		const results: ToolResult[] = []
@@ -53,7 +74,7 @@ export class Toolkit {
 			const result = await this.transport.callTool(call.name, args, signal)
 			results.push({ call, result })
 		}
-		return adapter.toOutputs(results)
+		return adapter.toOutputs(results) as Output[]
 	}
 }
 
@@ -85,12 +106,26 @@ export class Agent {
 		return { url: this.transport.url, headers: this.transport.headers }
 	}
 
-	/** The same surface, translated for a provider you call directly. */
-	toolkit(format: ToolFormat, options: ToolkitOptions = {}): Toolkit {
+	/**
+	 * The same surface, translated for a provider you call directly.
+	 *
+	 * Name the provider's types to have them travel with it:
+	 * `toolkit<OpenAI.Responses.Tool, OpenAI.Responses.ResponseInputItem>(…)`.
+	 */
+	toolkit<Tool = unknown, Output = unknown>(
+		format: ToolFormat,
+		options: ToolkitOptions = {}
+	): Toolkit<Tool, Output> {
 		const { tools, warnings, originals } = adapterFor(format).convert(this.tools, {
 			strict: options.strict ?? false,
 		})
-		return new Toolkit(tools, warnings, format, originals, this.transport)
+		return new Toolkit<Tool, Output>(
+			tools as Tool[],
+			warnings,
+			format,
+			originals,
+			this.transport
+		)
 	}
 
 	/** One tool, called directly. The escape hatch under the toolkits. */
@@ -149,11 +184,20 @@ export class EndUserAgent {
 		return { url: this.transport.url, headers: this.transport.headers }
 	}
 
-	toolkit(format: ToolFormat, options: ToolkitOptions = {}): Toolkit {
+	toolkit<Tool = unknown, Output = unknown>(
+		format: ToolFormat,
+		options: ToolkitOptions = {}
+	): Toolkit<Tool, Output> {
 		const { tools, warnings, originals } = adapterFor(format).convert(this.tools, {
 			strict: options.strict ?? false,
 		})
-		return new Toolkit(tools, warnings, format, originals, this.transport)
+		return new Toolkit<Tool, Output>(
+			tools as Tool[],
+			warnings,
+			format,
+			originals,
+			this.transport
+		)
 	}
 
 	async callTool(
