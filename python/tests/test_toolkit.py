@@ -202,6 +202,32 @@ def test_sends_nothing_back_when_the_model_called_nothing(tool_format, answer) -
     assert agent.toolkit(tool_format).execute(answer) == []
 
 
+# The gateway prefixes a tool with the server it came from, so Linear's
+# "list_issues" is served as "linear_list_issues". That prefix is the gateway's
+# doing, and a caller writing the name by hand should not have to know it.
+def test_reaches_a_tool_by_the_name_its_own_server_gave_it() -> None:
+    agent, gateway = agent_with(
+        tools=[GatewayTool(name="linear_list_issues", input_schema={"type": "object", "properties": {}})]
+    )
+
+    agent.call_tool("list_issues", {})
+
+    assert gateway.requests[-1].body["params"]["name"] == "linear_list_issues"
+
+
+# Two servers serving one name is a question only the caller can answer.
+def test_asks_which_server_when_two_serve_the_same_tool() -> None:
+    agent, _ = agent_with(
+        tools=[
+            GatewayTool(name="linear_search", input_schema={"type": "object", "properties": {}}),
+            GatewayTool(name="notion_search", input_schema={"type": "object", "properties": {}}),
+        ]
+    )
+
+    with pytest.raises(Exception, match="more than one"):
+        agent.call_tool("search", {})
+
+
 def test_pairs_a_gemini_call_with_its_answer() -> None:
     agent, _ = agent_with()
 

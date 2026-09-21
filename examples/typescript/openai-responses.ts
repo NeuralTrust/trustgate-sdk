@@ -16,11 +16,11 @@ import {
 
 import { fail, gatewayEnv } from './config.ts'
 
-// Replace with a tool your application actually carries: this one is a
-// placeholder, and a gateway that does not serve it is the expected first run.
-// The names are the server's own — the Routing tab lists them, and so does the
-// error this raises.
-const REQUIRES = ['notion_search']
+// The tools your application carries, by the names their own servers gave them:
+// the gateway serves Linear's `list_issues` as `linear_list_issues`, and that
+// prefix is its doing, so it is not written here. Replace these with yours — the
+// Routing tab lists them, and so does the error this raises.
+const REQUIRES = ['list_issues']
 const MODEL = 'gpt-5.2'
 const QUESTION = 'find the incident runbook and summarise it'
 // A turn is one model call and the tools it asks for. A handful is enough for

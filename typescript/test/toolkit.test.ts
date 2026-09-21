@@ -327,3 +327,43 @@ describe('a turn the model ended without calling anything', () => {
 		})
 	}
 })
+
+describe('the server prefix the gateway adds', () => {
+	const tool = (name: string): GatewayTool => ({
+		name,
+		inputSchema: { type: 'object', properties: {} },
+	})
+
+	// The gateway prefixes a tool with the server it came from, so Linear's
+	// `list_issues` is served as `linear_list_issues`. That prefix is the
+	// gateway's doing, and a caller writing the name by hand should not have to
+	// know it.
+	it('reaches a tool by the name its own server gave it', async () => {
+		const gateway = fakeGateway({ tools: [tool('linear_list_issues')] })
+		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
+		const agent = (await tg.connect()) as Agent
+
+		await agent.callTool('list_issues', {})
+
+		const sent = gateway.requests.at(-1)?.body as { params: { name: string } }
+		expect(sent.params.name).toBe('linear_list_issues')
+	})
+
+	// Two servers serving one name is a question only the caller can answer.
+	it('asks which server when two serve the same tool', async () => {
+		const gateway = fakeGateway({ tools: [tool('linear_search'), tool('notion_search')] })
+		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
+		const agent = (await tg.connect()) as Agent
+
+		await expect(agent.callTool('search', {})).rejects.toThrow(/more than one/)
+	})
+
+	// Required tools resolve the same way, or an agent could pass the preflight
+	// and fail on the call, or the other way round.
+	it('resolves a required tool the same way', async () => {
+		const gateway = fakeGateway({ tools: [tool('linear_list_issues')] })
+		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
+
+		await expect(tg.connect({ requires: ['list_issues'] })).resolves.toBeDefined()
+	})
+})

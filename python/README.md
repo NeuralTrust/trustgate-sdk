@@ -30,12 +30,12 @@ the same plane — the SDK names them and refuses rather than guessing.
 ## An agent that acts as itself
 
 ```python
-agent = tg.connect(requires=["notion_search"])
+agent = tg.connect(requires=["search"])
 
 agent.mcp                                        # url + headers for a framework
 tg.llm()                                         # base_url + api_key for OpenAI/Anthropic
 toolkit = agent.toolkit(ToolFormat.OPENAI_RESPONSES)
-agent.call_tool("notion_search", {"query": "runbook"})
+agent.call_tool("search", {"query": "runbook"})
 agent.refresh()                                  # re-read the toolkit
 agent.connections                                # its own upstream accounts
 ```
@@ -44,13 +44,19 @@ A batch that must not stop halfway:
 
 ```python
 try:
-    agent = tg.connect(requires=["notion_search"])
+    agent = tg.connect(requires=["search"])
 except UpstreamNotConnectedError as error:
     sys.exit(f"open {error.connect_url} and sign in to {error.providers}")
 
 for row in rows:
-    agent.call_tool("notion_search", {"query": row.query})
+    agent.call_tool("search", {"query": row.query})
 ```
+
+The gateway serves a tool under the server it came from - Notion's `search` as
+`notion_search` - so two servers with a `search` stay apart. That prefix is the
+gateway's, so `requires` and `call_tool` take the name the server itself gave the
+tool and add it; naming a tool two of your servers serve is the one case they
+ask instead.
 
 ## An agent that acts for its users
 

@@ -11,7 +11,16 @@ from .formats import ConversionWarning, ToolResult, adapter_for, restore_argumen
 from .mcp import MCPTransport
 from .schema import Schema
 from .transport import Transport
-from .types import Actor, ConnectLink, Connection, Endpoint, GatewayTool, ToolCall, ToolFormat
+from .types import (
+    Actor,
+    ConnectLink,
+    Connection,
+    Endpoint,
+    GatewayTool,
+    ToolCall,
+    ToolFormat,
+    resolve_tool_name,
+)
 
 
 class Toolkit:
@@ -78,8 +87,14 @@ class _ToolSurface:
         )
 
     def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
-        """One tool, called directly. The escape hatch under the toolkits."""
-        return self._transport.call_tool(name, arguments)
+        """One tool, called directly. The escape hatch under the toolkits.
+
+        The server prefix is optional here: "list_issues" reaches
+        "linear_list_issues" while Linear is the only server of this application
+        that serves it. The gateway put that prefix there, so a caller writing
+        the name by hand should not have to.
+        """
+        return self._transport.call_tool(resolve_tool_name(name, self.tools), arguments)
 
     def refresh(self) -> list[GatewayTool]:
         """Re-reads the surface.

@@ -1,3 +1,4 @@
+import { TrustGateError } from './errors.js'
 /** Which actor a handle speaks as. The consumer decides this, not the caller. */
 export const Actor = {
 	/** The application itself — principal `app:<consumer_id>`. */
@@ -68,4 +69,30 @@ export type ToolCall = {
 	id: string
 	name: string
 	arguments: Record<string, unknown>
+}
+
+/**
+ * The exposed name of a tool the caller named.
+ *
+ * The gateway prefixes every tool with the server it came from, so Linear's
+ * `list_issues` is served as `linear_list_issues`. That prefix is the gateway's
+ * doing and not the caller's, so a name written without one resolves — as long
+ * as exactly one server serves it. Two that do is a genuine question only the
+ * caller can answer, and it is asked rather than guessed.
+ *
+ * A name that matches nothing is returned unchanged, so the error that follows
+ * is about the tool rather than about this.
+ */
+export function resolveToolName(name: string, tools: GatewayTool[]): string {
+	const names = tools.map((tool) => tool.name)
+	if (names.includes(name)) return name
+	const matches = names.filter((candidate) => candidate.endsWith(`_${name}`))
+	if (matches.length === 1) return matches[0]
+	if (matches.length > 1) {
+		throw new TrustGateError(
+			`"${name}" is served by more than one of this application's servers ` +
+				`(${[...matches].sort().join(', ')}). Name the one you mean.`
+		)
+	}
+	return name
 }

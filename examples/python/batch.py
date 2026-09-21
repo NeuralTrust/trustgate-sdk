@@ -20,14 +20,16 @@ from trustgate import (
 
 from _config import gateway_env
 
-# Replace with the tools your application actually carries: these two are a
-# placeholder, and a gateway that serves neither is the expected first run. The
-# names are the servers' own - the Routing tab lists them, and so does the error
-# this raises.
-REQUIRED_TOOLS = ["notion_search", "linear_create_issue"]
-# The tool the loop below spends its batches on. One of REQUIRED_TOOLS, so the
-# preflight has already proved it is there.
-SEARCH_TOOL = REQUIRED_TOOLS[0]
+# The tools your application carries, by the names their own servers gave them:
+# the gateway serves Linear's "list_issues" as "linear_list_issues", and that
+# prefix is its doing, so it is not written here. Replace these with yours - the
+# Routing tab lists them, and so does the error this raises.
+REQUIRED_TOOLS = ["list_issues"]
+# The tool the loop below spends its batches on, and the arguments it takes -
+# which are the tool's own, so they change when you change the tool. One of
+# REQUIRED_TOOLS, so the preflight has already proved it is there.
+WORK_TOOL = REQUIRED_TOOLS[0]
+WORK_ARGUMENTS = {}
 BATCHES = 3
 
 log = logging.getLogger("batch")
@@ -72,7 +74,7 @@ def main() -> None:
             log.error("stopping: %s went away mid-run", [c.provider for c in pending])
             break
 
-        result = agent.call_tool(SEARCH_TOOL, {"query": f"incidents week {batch}"})
+        result = agent.call_tool(WORK_TOOL, WORK_ARGUMENTS)
         log.info(
             "batch %s: %s", batch, result.get("structuredContent") or result.get("content")
         )

@@ -19,7 +19,7 @@ The gateway is an MCP server, so an agent framework that brings its own MCP
 client needs nothing from this package but a URL and two headers:
 
 ```ts
-const agent = await tg.connect({ requires: ['notion_search'] })
+const agent = await tg.connect({ requires: ['search'] })
 new MCPServerStreamableHttp({ url: agent.mcp.url, headers: agent.mcp.headers })
 ```
 
@@ -101,7 +101,7 @@ both governed.
 
 ```python
 try:
-    agent = tg.connect(requires=["notion_search", "linear_create_issue"])
+    agent = tg.connect(requires=["search", "create_issue"])
 except MissingToolsError as e:
     sys.exit(f"the consumer is missing {e.missing}; ask your admin")
 except UpstreamNotConnectedError as e:

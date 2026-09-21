@@ -8,7 +8,7 @@ import {
 	UpstreamNotConnectedError,
 } from './errors.js'
 import { MCPTransport } from './mcp.js'
-import { Actor, type GatewayTool } from './types.js'
+import { Actor, resolveToolName, type GatewayTool } from './types.js'
 import { selectConsumer, whoAmI, type KeyConsumer, type KeyIdentity } from './whoami.js'
 
 export type ConnectOptions = {
@@ -199,9 +199,16 @@ function connectPageFor(consumer: KeyConsumer): string {
 	return consumer.url.replace(/\/mcp$/, '/connect')
 }
 
+/**
+ * The required tools this toolkit does not carry.
+ *
+ * Each name is resolved the way callTool resolves it, so an agent may require
+ * the name its server gave the tool and leave the gateway's server prefix to
+ * the gateway.
+ */
 function missingTools(tools: GatewayTool[], required: string[]): string[] {
 	const names = new Set(tools.map((tool) => tool.name))
-	return required.filter((name) => !names.has(name))
+	return required.filter((name) => !names.has(resolveToolName(name, tools)))
 }
 
 /** A gateway that cannot answer for a key cannot be used with one secret. */

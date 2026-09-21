@@ -7,6 +7,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
+from .errors import TrustGateError
+
 Schema = dict[str, Any]
 
 
@@ -85,3 +87,30 @@ class ToolCall:
 CONNECTED = "connected"
 NEEDS_RECONNECT = "needs_reconnect"
 NOT_CONNECTED = "not_connected"
+
+
+def resolve_tool_name(name: str, tools: list[GatewayTool]) -> str:
+    """The exposed name of a tool the caller named.
+
+    The gateway prefixes every tool with the server it came from, so Linear's
+    ``list_issues`` is served as ``linear_list_issues``. That prefix is the
+    gateway's doing and not the caller's, so a name written without one resolves
+    - as long as exactly one server serves it. Two that do is a genuine question
+    only the caller can answer, and it is asked rather than guessed.
+
+    A name that matches nothing is returned unchanged, so the error that follows
+    is about the tool rather than about this.
+    """
+    names = [tool.name for tool in tools]
+    if name in names:
+        return name
+    suffix = "_" + name
+    matches = [candidate for candidate in names if candidate.endswith(suffix)]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise TrustGateError(
+            f'"{name}" is served by more than one of this application\'s servers '
+            f'({", ".join(sorted(matches))}). Name the one you mean.'
+        )
+    return name

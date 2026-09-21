@@ -30,15 +30,21 @@ the same plane — the SDK names them and refuses rather than guessing.
 ## An agent that acts as itself
 
 ```ts
-const agent = await tg.connect({ requires: ['notion_search'] })
+const agent = await tg.connect({ requires: ['search'] })
 
 agent.mcp                                   // { url, headers } for a framework
 await tg.llm()                              // { baseUrl, apiKey } for OpenAI/Anthropic
 agent.toolkit(ToolFormat.OpenAIResponses)   // { tools, execute, warnings }
-await agent.callTool('notion_search', { query: 'runbook' })
+await agent.callTool('search', { query: 'runbook' })
 await agent.refresh()                       // re-read the toolkit
 agent.connections                           // its own upstream accounts
 ```
+
+The gateway serves a tool under the server it came from — Notion's `search` as
+`notion_search` — so two servers with a `search` stay apart. That prefix is the
+gateway's, so `requires` and `callTool` take the name the server itself gave the
+tool and add it; naming a tool two of your servers serve is the one case they
+ask instead.
 
 ## An agent that acts for its users
 

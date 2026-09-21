@@ -15,7 +15,7 @@ from .errors import (
 )
 from .mcp import MCPTransport
 from .transport import Transport, UrllibTransport
-from .types import CONNECTED, Actor, GatewayTool
+from .types import CONNECTED, Actor, GatewayTool, resolve_tool_name
 from .whoami import KeyConsumer, KeyIdentity, select_consumer, who_am_i
 
 
@@ -191,9 +191,14 @@ class TrustGate:
 
 
 def _check_requires(tools: list[GatewayTool], requires: list[str]) -> None:
-    """The tools an agent was written around, checked before anything runs."""
+    """The tools an agent was written around, checked before anything runs.
+
+    Each one is resolved the way call_tool resolves it, so an agent may require
+    the name its server gave the tool and leave the gateway's server prefix to
+    the gateway.
+    """
     names = {tool.name for tool in tools}
-    missing = [name for name in requires if name not in names]
+    missing = [name for name in requires if resolve_tool_name(name, tools) not in names]
     if missing:
         raise MissingToolsError(missing, sorted(names))
 

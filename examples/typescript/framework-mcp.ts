@@ -12,7 +12,7 @@ import { TrustGate } from '@neuraltrust/trustgate'
 
 import { fail, gatewayEnv } from './config.ts'
 
-const REQUIRES = ['notion_search']
+const REQUIRES = ['list_issues']
 const MODEL = 'gpt-5.2'
 const QUESTION = 'what do I do when the ingest queue backs up?'
 

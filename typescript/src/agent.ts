@@ -3,7 +3,17 @@ import { createConnectLink, listConnections, requireEndUser } from './connection
 import { AppActorUnavailableError, EndUserActorUnavailableError, ToolNotFoundError } from './errors.js'
 import { adapterFor, restoreArguments, type ConversionWarning, type ToolResult } from './formats.js'
 import { MCPTransport } from './mcp.js'
-import { Actor, ToolFormat, type ConnectLink, type Connection, type Endpoint, type GatewayTool, type JSONSchema, type ToolCall } from './types.js'
+import {
+	Actor,
+	ToolFormat,
+	resolveToolName,
+	type ConnectLink,
+	type Connection,
+	type Endpoint,
+	type GatewayTool,
+	type JSONSchema,
+	type ToolCall,
+} from './types.js'
 
 export type ToolkitOptions = {
 	/**
@@ -128,13 +138,20 @@ export class Agent {
 		)
 	}
 
-	/** One tool, called directly. The escape hatch under the toolkits. */
+	/**
+	 * One tool, called directly. The escape hatch under the toolkits.
+	 *
+	 * The server prefix is optional here: "list_issues" reaches
+	 * "linear_list_issues" while Linear is the only server of this application
+	 * that serves it. The gateway put that prefix there, so a caller writing the
+	 * name by hand should not have to.
+	 */
 	async callTool(
 		name: string,
 		args: Record<string, unknown> = {},
 		signal?: AbortSignal
 	): Promise<Record<string, unknown>> {
-		return this.transport.callTool(name, args, signal)
+		return this.transport.callTool(resolveToolName(name, this.tools), args, signal)
 	}
 
 	/**
