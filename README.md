@@ -124,6 +124,18 @@ The link arrives inside the error, because that is where the gateway mints it.
 `alice.connections()` and `alice.connectLink()` do the same thing ahead of
 time, when you would rather ask than fail.
 
+## Running something
+
+[`examples/`](examples) holds four programs that run as they are, two per
+language — a batch job and an end-user assistant. Each project builds the SDK
+from this repository and takes its gateway and key from a `.env` you copy from
+the `.env.example` beside it:
+
+```sh
+cd examples/python && cp .env.example .env && uv run batch.py
+cd examples/typescript && cp .env.example .env && npm install && npm run openai
+```
+
 ## Reading the docs for your language
 
 - [`typescript/`](typescript) — `@neuraltrust/trustgate`

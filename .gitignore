@@ -6,3 +6,10 @@ __pycache__/
 .venv/
 .pytest_cache/
 .coverage
+
+# Filled in from the .env.example next to it; holds real keys.
+.env
+# uv's resolved lock for the examples: they are a demo, not a shipped artifact,
+# and pinning them would go stale against the SDK they build from source.
+examples/python/uv.lock
+examples/typescript/package-lock.json
