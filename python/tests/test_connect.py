@@ -171,9 +171,15 @@ def test_asks_which_one_when_a_key_reaches_two_of_a_plane() -> None:
     assert named.connect().mcp.url == "https://gw.test/billing/mcp"
 
 
-def test_names_a_gateway_too_old_to_answer_for_a_key() -> None:
-    with pytest.raises(Exception, match="does not serve /whoami"):
+def test_shows_the_address_it_asked_when_whoami_is_not_there() -> None:
+    # A 404 is far more often the wrong base URL than a gateway too old, so the
+    # message leads with that and quotes the URL it actually tried - which is
+    # usually enough to see the mistake without reading further.
+    with pytest.raises(Exception) as caught:
         client(FakeGateway(whoami_status=404)).connect()
+
+    assert "https://gw.test/whoami answered 404" in str(caught.value)
+    assert "no consumer path after it" in str(caught.value)
 
 
 def test_end_user_can_read_its_connections_and_mint_a_link() -> None:

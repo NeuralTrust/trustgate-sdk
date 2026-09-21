@@ -163,10 +163,15 @@ describe('resolving a key', () => {
 		expect(((await named.connect()) as Agent).mcp.url).toBe('https://gw.test/billing/mcp')
 	})
 
-	it('names a gateway too old to answer for a key', async () => {
+	it('shows the address it asked when /whoami is not there', async () => {
 		const gateway = fakeGateway({ whoamiStatus: 404 })
 		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
 
-		await expect(tg.connect()).rejects.toThrow(/does not serve \/whoami/)
+		// A 404 is far more often the wrong base URL than a gateway too old, so
+		// the message leads with that and quotes the URL it actually tried —
+		// which is usually enough to see the mistake without reading further.
+		const error = await tg.connect().catch((e: unknown) => e)
+		expect(String(error)).toContain(`${base.baseUrl}/whoami answered 404`)
+		expect(String(error)).toMatch(/no consumer path after it/)
 	})
 })

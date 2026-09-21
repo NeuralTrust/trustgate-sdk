@@ -52,7 +52,7 @@ export class TrustGate {
 	async identity(signal?: AbortSignal): Promise<KeyIdentity> {
 		this.identityPromise ??= whoAmI(this.config, signal).catch((error: unknown) => {
 			this.identityPromise = undefined
-			throw asIdentityError(error)
+			throw asIdentityError(error, this.config.baseUrl)
 		})
 		return this.identityPromise
 	}
@@ -150,11 +150,14 @@ function missingTools(tools: GatewayTool[], required: string[]): string[] {
 }
 
 /** A gateway that cannot answer for a key cannot be used with one secret. */
-function asIdentityError(error: unknown): unknown {
+function asIdentityError(error: unknown, baseUrl: string): unknown {
 	if (error instanceof TrustGateError && error.status === 404) {
 		return new TrustGateError(
-			'this gateway does not serve /whoami, so the SDK cannot resolve which consumers ' +
-				'this key reaches. Upgrade the gateway to a version that serves it.',
+			`${baseUrl}/whoami answered 404, so the SDK cannot resolve which consumers ` +
+				'this key reaches. Usually the base URL is the wrong address: it is the MCP ' +
+				"plane's host on its own, with no consumer path after it — not the " +
+				'/<application>/mcp endpoint, and not the LLM plane. Otherwise the gateway ' +
+				'predates /whoami and needs upgrading.',
 			{ status: 404, cause: error }
 		)
 	}

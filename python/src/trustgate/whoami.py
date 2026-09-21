@@ -47,8 +47,11 @@ def who_am_i(config: Config, transport: Transport) -> KeyIdentity:
     )
     if response.status == 404:
         raise TrustGateError(
-            "this gateway does not serve /whoami, so the SDK cannot resolve which consumers "
-            "this key reaches. Upgrade the gateway to a version that serves it.",
+            f"{config.base_url}/whoami answered 404, so the SDK cannot resolve which "
+            "consumers this key reaches. Usually TRUSTGATE_URL is the wrong address: it is "
+            "the MCP plane's host on its own, with no consumer path after it — not the "
+            "/<application>/mcp endpoint, and not the LLM plane. Otherwise the gateway "
+            "predates /whoami and needs upgrading.",
             status=404,
         )
     if response.status >= 400:
