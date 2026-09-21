@@ -11,14 +11,16 @@ values — your gateway and one API key — from a `.env` you copy from the
 | | What it shows |
 |---|---|
 | `python/whoami.py` | What one key reaches, and which of these examples fits it — run this first when something is off |
-| `python/batch.py` | A nightly job: everything that could stop it is checked before the first row, because nobody is there to open a connect link |
+| `python/batch.py` | A nightly triage run: a model judges each row with the whole toolkit to look things up with, and everything that could stop the job is checked before the first one |
 | `python/end_user_agent.py` | An assistant that names one of its users per call, and turns "not connected" into a link to show them |
 | `typescript/openai-responses.ts` | Tools translated for the Responses API and run back through the gateway — no MCP client in sight |
 | `typescript/framework-mcp.ts` | The same consumer handed to a framework that brings its own MCP client |
 
-Both TypeScript examples send their model calls through the gateway too, so
-neither file holds an OpenAI key. The only Python example that needs a model
-key of its own is `end_user_agent.py`, which calls Anthropic directly.
+The TypeScript examples send their model calls through the gateway too, so
+neither file holds an OpenAI key, and so does `batch.py` when the key it runs on
+reaches an LLM consumer — it falls back to `ANTHROPIC_API_KEY` when it does not.
+`end_user_agent.py` always calls Anthropic directly, which is the other half of
+the picture: a model call the gateway never sees.
 
 ## Where the values come from
 

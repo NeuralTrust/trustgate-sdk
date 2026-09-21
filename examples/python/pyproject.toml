@@ -5,7 +5,8 @@ description = "Runnable TrustGate SDK examples."
 requires-python = ">=3.10"
 dependencies = [
     "trustgate",
-    # Only end_user_agent.py needs it; kept here so one `uv sync` runs everything.
+    # Both Python examples call a model: batch.py to judge each row, and
+    # end_user_agent.py to answer one user.
     "anthropic>=0.40",
 ]
 
