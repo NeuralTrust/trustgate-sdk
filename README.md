@@ -9,7 +9,7 @@ MCP itself does not carry — **who a call runs as**, **which credential** it
 travels with, and **what to do when an upstream account is not connected**.
 
 ```bash
-npm install @neuraltrust/trustgate     # TypeScript, Node 18+
+npm install @neuraltrust/trustgate     # TypeScript, Node 22+
 pip install trustgate-sdk              # Python 3.10+
 ```
 
