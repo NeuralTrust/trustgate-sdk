@@ -1,6 +1,6 @@
 {
   "name": "@neuraltrust/trustgate",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "TrustGate SDK — governed tools and models for agents, over the MCP and LLM planes of a TrustGate gateway.",
   "license": "Apache-2.0",
   "author": "NeuralTrust",
