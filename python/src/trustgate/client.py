@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .agent import Agent, EndUserAgent, end_user_agent
-from .config import API_KEY_HEADER, Config, resolve_config
+from .config import API_KEY_HEADER, resolve_config
 from .connections import list_connections
 from .errors import MissingToolsError, UpstreamNotConnectedError
 from .mcp import MCPTransport
@@ -124,13 +124,9 @@ class TrustGate:
         tools = transport.list_tools()
         _check_requires(tools, list(requires or []))
 
-        return Agent(
-            self._config, self._transport, consumer.slug, transport, tools, connections
-        )
+        return Agent(self._config, self._transport, consumer.slug, transport, tools, connections)
 
-    def for_end_user(
-        self, end_user: str, requires: list[str] | None = None
-    ) -> EndUserAgent:
+    def for_end_user(self, end_user: str, requires: list[str] | None = None) -> EndUserAgent:
         """The handle for one named person, on the same consumer and the same key.
 
         The name is asserted by this application and not verified, so the

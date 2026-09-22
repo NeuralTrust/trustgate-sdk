@@ -29,7 +29,9 @@ def test_inline_refs_leaves_a_cycle_alone() -> None:
         {
             "type": "object",
             "properties": {"child": {"$ref": "#/$defs/Node"}},
-            "$defs": {"Node": {"type": "object", "properties": {"child": {"$ref": "#/$defs/Node"}}}},
+            "$defs": {
+                "Node": {"type": "object", "properties": {"child": {"$ref": "#/$defs/Node"}}}
+            },
         }
     )
 
@@ -70,7 +72,10 @@ def test_to_strict_offers_null_beside_a_schema_with_no_plain_type() -> None:
     [
         ({"type": "object", "properties": {}, "additionalProperties": True}, "not in its schema"),
         ({"allOf": [{"type": "object"}]}, "allOf"),
-        ({"type": "object", "properties": {"t": {"prefixItems": [{"type": "string"}]}}}, "prefixItems"),
+        (
+            {"type": "object", "properties": {"t": {"prefixItems": [{"type": "string"}]}}},
+            "prefixItems",
+        ),
     ],
 )
 def test_to_strict_gives_up_and_says_why(schema: dict, expected: str) -> None:
@@ -94,7 +99,9 @@ ORIGINAL = {
 # Strict asked the model to send null for what it had no value for. The
 # upstream never agreed to that and rejects it.
 def test_strip_injected_nulls_drops_what_the_conversion_asked_for() -> None:
-    assert strip_injected_nulls({"query": "runbook", "limit": None}, ORIGINAL) == {"query": "runbook"}
+    assert strip_injected_nulls({"query": "runbook", "limit": None}, ORIGINAL) == {
+        "query": "runbook"
+    }
 
 
 def test_strip_injected_nulls_keeps_a_null_the_tool_accepts() -> None:

@@ -28,6 +28,15 @@ from .formats import ConversionWarning, adapter_for, result_to_text
 from .mcp import MCPTransport
 from .schema import StrictResult, inline_refs, strip_injected_nulls, to_strict
 from .transport import Response, Transport, UrllibTransport
+from .types import (
+    Actor,
+    Connection,
+    ConnectLink,
+    Endpoint,
+    GatewayTool,
+    ToolCall,
+    ToolFormat,
+)
 from .whoami import (
     KeyConsumer,
     KeyIdentity,
@@ -35,15 +44,6 @@ from .whoami import (
     KeyUpstream,
     select_consumer,
     who_am_i,
-)
-from .types import (
-    Actor,
-    ConnectLink,
-    Connection,
-    Endpoint,
-    GatewayTool,
-    ToolCall,
-    ToolFormat,
 )
 
 __version__ = "0.1.0"

@@ -1,0 +1,27 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Both SDKs have no runtime dependencies, so these are toolchain updates:
+  # grouped into one PR per ecosystem rather than one per package.
+  - package-ecosystem: npm
+    directory: /typescript
+    schedule:
+      interval: weekly
+    groups:
+      toolchain:
+        patterns: ["*"]
+
+  - package-ecosystem: uv
+    directory: /python
+    schedule:
+      interval: weekly
+    groups:
+      toolchain:
+        patterns: ["*"]

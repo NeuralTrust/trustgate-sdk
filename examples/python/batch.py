@@ -91,9 +91,7 @@ def verdict(agent, client, issue: dict) -> str:
         )
         outputs = toolkit.execute(message)
         if not outputs:
-            return " ".join(
-                block.text for block in message.content if block.type == "text"
-            ).strip()
+            return " ".join(block.text for block in message.content if block.type == "text").strip()
         messages.append({"role": "assistant", "content": message.content})
         messages.extend(outputs)
 
@@ -110,7 +108,7 @@ def split_verdict(answer: str) -> tuple[str, str]:
     flat = " ".join(answer.replace("*", " ").replace("#", " ").split())
     for name in VERDICTS:
         if flat.upper().startswith(name):
-            return name, flat[len(name):].lstrip(" -–—:,.").strip()
+            return name, flat[len(name) :].lstrip(" -–—:,.").strip()
     return "?", flat
 
 
@@ -134,7 +132,7 @@ def model_client(tg: TrustGate):
     """The model, through the gateway when this key reaches one.
 
     Then the whole agent stands on one secret and the model calls are governed
-    like the tool calls. A key that reaches no LLM consumer falls back to
+    like the tool calls. A key that reaches no models falls back to
     Anthropic directly, which is a key of your own and a call nobody sees.
     """
     import anthropic
@@ -142,11 +140,11 @@ def model_client(tg: TrustGate):
     try:
         llm = tg.llm()
     except PlaneUnavailableError:
-        log.info("no LLM consumer behind this key; calling Anthropic directly")
+        log.info("this key reaches no models; calling Anthropic directly")
         return anthropic.Anthropic(
             api_key=require(
                 "ANTHROPIC_API_KEY",
-                "This key reaches no LLM consumer, so the model call needs one of yours.",
+                "This key reaches no models, so the model call needs a key of yours.",
             )
         )
     log.info("models through %s", llm.consumer)

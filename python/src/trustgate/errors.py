@@ -80,7 +80,7 @@ class UpstreamNotConnectedError(TrustGateError):
     ``for_end_user`` is.
     """
 
-    def __init__(self, upstreams: list["KeyUpstream"]) -> None:
+    def __init__(self, upstreams: list[KeyUpstream]) -> None:
         super().__init__(_describe_blocked(upstreams))
         self.upstreams = upstreams
 
@@ -90,7 +90,7 @@ class UpstreamNotConnectedError(TrustGateError):
         return [upstream.server for upstream in self.upstreams]
 
 
-def _describe_blocked(upstreams: list["KeyUpstream"]) -> str:
+def _describe_blocked(upstreams: list[KeyUpstream]) -> str:
     """Says who fixes each server, with the line of code when it is the caller.
 
     Read on a terminal at startup, so it is written to be acted on there: the
@@ -123,11 +123,11 @@ def _describe_blocked(upstreams: list["KeyUpstream"]) -> str:
     return "\n\n".join(parts)
 
 
-def _names(upstreams: list["KeyUpstream"]) -> str:
+def _names(upstreams: list[KeyUpstream]) -> str:
     return ", ".join(f'"{upstream.server}"' for upstream in upstreams)
 
 
-def _verb(upstreams: list["KeyUpstream"], one: str, many: str) -> str:
+def _verb(upstreams: list[KeyUpstream], one: str, many: str) -> str:
     return one if len(upstreams) == 1 else many
 
 

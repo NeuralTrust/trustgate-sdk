@@ -1,5 +1,5 @@
 /**
- * The same consumer, handed to a framework that brings its own MCP client.
+ * The same application, handed to a framework that brings its own MCP client.
  *
  * There is no tool list and no execution loop here: the framework lists and
  * calls for itself. All the SDK contributes is a checked URL and its headers —

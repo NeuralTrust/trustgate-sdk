@@ -14,7 +14,6 @@ from .config import API_KEY_HEADER, Config
 from .errors import PlaneUnavailableError, TrustGateError
 from .transport import Transport, error_for_response
 
-
 #: Who has to act before a server answers a call that runs as the application.
 #:
 #: ``administrator`` is an instance whose shared account nobody has connected -

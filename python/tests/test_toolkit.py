@@ -94,7 +94,9 @@ def test_collects_gemini_declarations_and_says_what_it_dropped() -> None:
 def test_warns_instead_of_failing_when_a_tool_cannot_be_strict() -> None:
     agent, _ = agent_with(
         tools=[
-            GatewayTool(name="open_ended", input_schema={"type": "object", "additionalProperties": True}),
+            GatewayTool(
+                name="open_ended", input_schema={"type": "object", "additionalProperties": True}
+            ),
             SEARCH,
         ]
     )
@@ -126,9 +128,7 @@ def test_runs_the_calls_the_model_asked_for() -> None:
         }
     )
 
-    assert outputs == [
-        {"type": "function_call_output", "call_id": "call_1", "output": "found it"}
-    ]
+    assert outputs == [{"type": "function_call_output", "call_id": "call_1", "output": "found it"}]
     assert gateway.requests[-1].body["params"] == {
         "name": "notion_search",
         "arguments": {"query": "runbook"},
@@ -207,7 +207,11 @@ def test_sends_nothing_back_when_the_model_called_nothing(tool_format, answer) -
 # doing, and a caller writing the name by hand should not have to know it.
 def test_reaches_a_tool_by_the_name_its_own_server_gave_it() -> None:
     agent, gateway = agent_with(
-        tools=[GatewayTool(name="linear_list_issues", input_schema={"type": "object", "properties": {}})]
+        tools=[
+            GatewayTool(
+                name="linear_list_issues", input_schema={"type": "object", "properties": {}}
+            )
+        ]
     )
 
     agent.call_tool("list_issues", {})
@@ -232,7 +236,11 @@ def test_pairs_a_gemini_call_with_its_answer() -> None:
     agent, _ = agent_with()
 
     outputs = agent.toolkit(ToolFormat.GEMINI).execute(
-        {"candidates": [{"content": {"parts": [{"functionCall": {"name": "notion_search", "args": {}}}]}}]}
+        {
+            "candidates": [
+                {"content": {"parts": [{"functionCall": {"name": "notion_search", "args": {}}}]}}
+            ]
+        }
     )
 
     assert outputs[0]["parts"][0]["functionResponse"]["name"] == "notion_search"

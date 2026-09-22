@@ -62,9 +62,7 @@ def inline_refs(schema: Schema) -> Schema:
                 return resolved
             return node
         return {
-            key: walk(value)
-            for key, value in node.items()
-            if key not in ("$defs", "definitions")
+            key: walk(value) for key, value in node.items() if key not in ("$defs", "definitions")
         }
 
     return walk(schema)
@@ -109,9 +107,7 @@ def to_strict(schema: Schema) -> StrictResult:
             refuse("it uses prefixItems (tuple typing)")
             return node
 
-        out = {
-            key: (value if key == "required" else walk(value)) for key, value in node.items()
-        }
+        out = {key: (value if key == "required" else walk(value)) for key, value in node.items()}
         if out.get("type") != "object" and not isinstance(out.get("properties"), dict):
             return out
 
