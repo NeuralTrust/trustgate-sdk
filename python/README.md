@@ -1,9 +1,9 @@
-# trustgate
+# trustgate-sdk
 
 The TrustGate SDK for Python. 3.10+, standard library only.
 
 ```bash
-pip install trustgate
+pip install trustgate-sdk
 ```
 
 ## Setup

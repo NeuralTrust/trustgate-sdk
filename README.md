@@ -10,7 +10,7 @@ and **what to do when an upstream account is not connected**.
 
 ```bash
 npm install @neuraltrust/trustgate     # TypeScript, Node 18+
-pip install trustgate                  # Python 3.10+
+pip install trustgate-sdk              # Python 3.10+
 ```
 
 ## Two ways in, and which one you want

@@ -3,7 +3,7 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "trustgate"
+name = "trustgate-sdk"
 version = "0.1.0"
 description = "TrustGate SDK - governed tools and models for agents, over the MCP and LLM planes of a TrustGate gateway."
 readme = "README.md"
