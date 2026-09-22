@@ -1,6 +1,6 @@
-"""An assistant that acts for its own end users.
+"""An assistant acting for one of its own end users.
 
-The consumer identifies them, so every call names one, and the moment a user
+The application names the person each call is for, and the moment that person
 has not connected an account is a link to show them rather than a failure.
 
     uv run end_user_agent.py
@@ -13,6 +13,7 @@ import anthropic
 
 from trustgate import (
     ConsentRequiredError,
+    EndUserAgent,
     ToolFormat,
     TrustGate,
     TrustGateError,
@@ -21,14 +22,14 @@ from trustgate import (
 from _config import gateway_env, require
 
 MODEL = "claude-opus-5"
-DEFAULT_USER = "user_123"
-DEFAULT_QUESTION = "find the incident runbook and summarise it"
+DEFAULT_USER = "viktor.manuel.garcia@gmail.com"
+DEFAULT_QUESTION = "find the last issues in Linear"
 # A turn is one model call and the tools it asks for. A handful is enough for
 # an answer, and a bound means a model that keeps calling stops on its own.
-MAX_TURNS = 6
+MAX_TURNS = 10
 
 
-def answer(user, client: "anthropic.Anthropic", question: str) -> str:
+def answer(user: EndUserAgent, client: "anthropic.Anthropic", question: str) -> str:
     # The toolkit is the application's and identical for everyone it acts for;
     # what the handle changes is whose upstream account the gateway reaches for.
     toolkit = user.toolkit(ToolFormat.ANTHROPIC_MESSAGES)

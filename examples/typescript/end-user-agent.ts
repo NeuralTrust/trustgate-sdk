@@ -1,7 +1,7 @@
 /**
- * An assistant that acts for its own end users.
+ * An assistant acting for one of its own end users.
  *
- * The consumer identifies them, so every call names one, and the moment a user
+ * The application names the person each call is for, and the moment that person
  * has not connected an account is a link to show them rather than a failure.
  *
  *     npm run end-user

@@ -60,7 +60,7 @@ async def main() -> None:
 
     tg = TrustGate()
     try:
-        handle = tg.connect(requires=REQUIRES)
+        application = tg.connect(requires=REQUIRES)
     except MissingToolsError as error:
         sys.exit(f"this application cannot run: {error}")
     except UpstreamNotConnectedError as error:
@@ -70,7 +70,7 @@ async def main() -> None:
 
     # The whole handover: a URL the SDK has already proved reachable, and the
     # headers that authenticate it. The framework does the rest of MCP.
-    endpoint = handle.mcp
+    endpoint = application.mcp
     toolset = MCPToolset(StreamableHttpTransport(endpoint.url, headers=endpoint.headers))
 
     agent = Agent(
