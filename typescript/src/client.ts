@@ -25,8 +25,18 @@ export type ConnectOptions = {
 
 /** What the LLM plane needs to be handed to a provider's own client. */
 export type LLMEndpoint = {
-	/** Pass as `baseURL` to the OpenAI or Anthropic client. */
+	/** Pass as `baseURL` to the OpenAI client. It ends in `/v1`. */
 	baseUrl: string
+	/**
+	 * Pass as `baseURL` to the Anthropic client.
+	 *
+	 * The two clients disagree on where the version goes. OpenAI's is handed a
+	 * base that already ends in `/v1` and appends `/chat/completions`;
+	 * Anthropic's appends `/v1/messages` to what it is given, so handing it
+	 * `baseUrl` asks the gateway for `/v1/v1/messages`. This is the
+	 * application's root, the one every dialect but OpenAI's hangs from.
+	 */
+	anthropicBaseUrl: string
 	apiKey: string
 	headers: Record<string, string>
 	/** The consumer behind it, for logs and for error messages. */
@@ -74,6 +84,7 @@ export class TrustGate {
 		const consumer = selectConsumer(identity, 'LLM', this.config.llmConsumer, 'llmConsumer')
 		return {
 			baseUrl: consumer.url,
+			anthropicBaseUrl: withoutVersion(consumer.url),
 			apiKey: this.config.apiKey,
 			headers: { [API_KEY_HEADER]: this.config.apiKey },
 			consumer: consumer.slug,
@@ -147,6 +158,11 @@ export class TrustGate {
 function missingTools(tools: GatewayTool[], required: string[]): string[] {
 	const names = new Set(tools.map((tool) => tool.name))
 	return required.filter((name) => !names.has(resolveToolName(name, tools)))
+}
+
+function withoutVersion(url: string): string {
+	const trimmed = url.replace(/\/+$/, '')
+	return trimmed.endsWith('/v1') ? trimmed.slice(0, -'/v1'.length) : trimmed
 }
 
 /** A gateway that cannot answer for a key cannot be used with one secret. */
