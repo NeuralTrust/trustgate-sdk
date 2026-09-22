@@ -42,7 +42,7 @@ QUEUE_ARGUMENTS: dict = {}
 # Triage is a judgement made many times over, which is the shape a small model
 # is for. Through the gateway this name is whichever model it routes; called
 # directly it is Anthropic's own.
-MODEL = "claude-haiku-4-5-20251001"
+MODEL = "auto"
 QUESTION = (
     "Does this issue need a human tonight, or can it wait for the morning?\n"
     "Look up whatever you need first.\n"
