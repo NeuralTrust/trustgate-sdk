@@ -15,9 +15,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from .errors import (
-    AppActorUnavailableError,
     AuthenticationError,
-    EndUserActorUnavailableError,
     InvalidRequestError,
     RateLimitedError,
     ServiceUnavailableError,
@@ -92,8 +90,6 @@ def error_for_response(response: Response) -> TrustGateError:
     by_code = {
         "unauthenticated": AuthenticationError,
         "invalid_request": InvalidRequestError,
-        "end_users_not_identified": EndUserActorUnavailableError,
-        "consumer_acts_for_users": AppActorUnavailableError,
         "unavailable": ServiceUnavailableError,
     }
     if code in by_code:

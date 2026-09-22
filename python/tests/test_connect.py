@@ -4,7 +4,7 @@ import pytest
 
 from trustgate import (
     Agent,
-    EndUserAgentFactory,
+    EndUserAgent,
     MissingToolsError,
     PlaneUnavailableError,
     TrustGate,
@@ -48,121 +48,133 @@ def test_refuses_at_startup_when_the_toolkit_lost_a_needed_tool() -> None:
 
 
 # Nobody is present to open a connect link once a batch is running, so an
-# unconnected upstream has to stop it before it starts.
-def test_refuses_an_application_whose_own_accounts_are_not_connected() -> None:
+# unconnected upstream has to stop it before it starts - and the refusal names
+# who can fix it, because the caller never can.
+def test_refuses_an_application_whose_servers_have_no_account_behind_them() -> None:
     gateway = FakeGateway(
-        connections=[
-            {"provider": "com.notion/mcp", "status": "connected"},
-            {"provider": "app.linear/mcp", "status": "not_connected"},
+        upstreams=[
+            {"server": "Notion", "account": "shared", "connected": True},
+            {
+                "server": "Linear",
+                "account": "shared",
+                "connected": False,
+                "blocked": "administrator",
+            },
         ]
     )
 
     with pytest.raises(UpstreamNotConnectedError) as caught:
         client(gateway).connect()
 
-    assert caught.value.providers == ["app.linear/mcp"]
-    assert caught.value.connect_url == "https://gw.test/acme/connect"
+    assert caught.value.servers == ["Linear"]
+    assert "an administrator connects it" in str(caught.value)
 
 
-def test_counts_an_expired_account_as_not_connected() -> None:
-    gateway = FakeGateway(connections=[{"provider": "com.notion/mcp", "status": "needs_reconnect"}])
+# A server that keeps an account per person has nothing for an application, and
+# the remedy is a different handle rather than a different admin.
+def test_sends_the_caller_to_for_end_user_when_the_account_is_per_person() -> None:
+    gateway = FakeGateway(
+        upstreams=[
+            {"server": "GitHub", "account": "user", "connected": False, "blocked": "end_user"}
+        ]
+    )
+
+    with pytest.raises(UpstreamNotConnectedError, match="for_end_user"):
+        client(gateway).connect()
+
+
+def test_counts_an_account_that_has_gone_stale_as_still_blocking() -> None:
+    gateway = FakeGateway(
+        upstreams=[
+            {
+                "server": "Notion",
+                "account": "shared",
+                "connected": True,
+                "needs_reconnect": True,
+                "blocked": "administrator",
+            }
+        ]
+    )
 
     with pytest.raises(UpstreamNotConnectedError):
         client(gateway).connect()
 
 
-# The consumer decides which actor it is; the SDK reads that off the one
-# question only one of the two can answer.
-def test_discovers_an_application_that_acts_for_its_own_users() -> None:
-    gateway = FakeGateway(actor="end_user")
-
-    handle = client(gateway).connect()
-
-    assert isinstance(handle, EndUserAgentFactory)
-    assert handle.actor.value == "end_user"
+# A server carrying its own credential is not listed, and neither is anything at
+# all when the gateway could not read the accounts. Either way nothing is
+# blocking, and a startup that refused on "no list" would refuse every
+# application that needs no account.
+def test_starts_when_nothing_is_waiting_to_be_connected() -> None:
+    assert isinstance(client(FakeGateway()).connect(), Agent)
 
 
-def test_names_the_user_on_every_call_once_one_is_chosen() -> None:
-    gateway = FakeGateway(actor="end_user")
-    handle = client(gateway).connect()
+# The same consumer, the same key: which actor a call is comes from the call, so
+# both handles are always available and neither is configured.
+def test_acts_for_a_named_person_on_the_same_consumer() -> None:
+    gateway = FakeGateway()
 
-    alice = handle.for_end_user("user_123")
+    alice = client(gateway).for_end_user("user_123")
     alice.call_tool("notion_search", {"query": "runbook"})
 
+    assert isinstance(alice, EndUserAgent)
+    assert alice.actor.value == "end_user"
     assert alice.mcp.headers[END_USER_HEADER] == "user_123"
     assert gateway.requests[-1].headers[END_USER_HEADER] == "user_123"
 
 
-# An application that acts as itself has no users to speak for, and a handle
-# that pretended otherwise would pool everyone into one account.
-def test_refuses_to_name_a_user_on_an_application_that_acts_as_itself() -> None:
-    agent = client(FakeGateway()).connect()
+# The toolkit is the application's and identical for everyone it acts for, so
+# naming a person from an agent already holding it costs no round trip.
+def test_names_a_person_from_the_application_handle_without_asking_again() -> None:
+    gateway = FakeGateway()
+    agent = client(gateway).connect()
+    listed_before = len([r for r in gateway.requests if r.url.endswith("/mcp")])
 
-    with pytest.raises(Exception, match="no end users"):
-        agent.for_end_user("user_123")
+    alice = agent.for_end_user("user_123")
 
-
-# The endpoint refuses a request that names no user, tools/list included, so an
-# application that names its own users has nothing connect() can ask it. Asking
-# anyway is a 400 that no caller can act on.
-def test_connects_to_an_app_identified_consumer_without_asking_as_the_application() -> None:
-    gateway = FakeGateway(actor="end_user")
-
-    handle = client(gateway).connect()
-
-    assert not [r for r in gateway.requests if r.url.endswith("/mcp")]
-    alice = handle.for_end_user("user_123")
     assert [tool.name for tool in alice.tools] == ["notion_search"]
-    assert [tool.name for tool in handle.tools] == ["notion_search"]
+    assert len([r for r in gateway.requests if r.url.endswith("/mcp")]) == listed_before
+    assert alice.mcp.headers[END_USER_HEADER] == "user_123"
 
 
-# The check connect() makes for an application acting as itself still happens -
-# it just cannot happen until there is a user to ask as.
-def test_checks_required_tools_on_the_first_named_user() -> None:
-    handle = client(FakeGateway(actor="end_user")).connect(requires=["linear_create_issue"])
-
+def test_checks_required_tools_for_a_named_person_too() -> None:
     with pytest.raises(MissingToolsError) as caught:
-        handle.for_end_user("user_123")
+        client(FakeGateway()).for_end_user("user_123", requires=["linear_create_issue"])
 
     assert caught.value.missing == ["linear_create_issue"]
 
 
-def test_says_the_toolkit_needs_a_user_before_one_is_named() -> None:
-    handle = client(FakeGateway(actor="end_user")).connect()
+# A server that refuses a request naming nobody is a per-user server, not a
+# misconfigured consumer: the named handle reaches it and the application handle
+# does not, which is the same distinction stated at the other end.
+def test_reaches_a_per_user_surface_once_a_person_is_named() -> None:
+    alice = client(FakeGateway(require_end_user=True)).for_end_user("user_123")
 
-    with pytest.raises(Exception, match="call for_end_user"):
-        handle.tools
+    assert [tool.name for tool in alice.tools] == ["notion_search"]
 
 
-# Its users arrive with their own logins, and the end-user header means nothing
-# on such a consumer - a handle minted from an API key would run all of them as
-# the application, on the application's own accounts.
-def test_refuses_to_act_for_users_who_sign_in_for_themselves() -> None:
-    gateway = FakeGateway(whoami={
-        "gateway": "acme",
-        "consumers": [{
-            "slug": "acme", "type": "MCP", "active": True,
-            "url": "https://gw.test/acme/mcp",
-            "acts_for_users": True, "identity_source": "platform",
-        }],
-    })
+# A key that retires itself is a 401 nobody saw coming; a long run can ask first
+# and refuse to start.
+def test_says_when_the_calling_key_expires() -> None:
+    identity = client(FakeGateway(key_expires_at="2027-03-01T09:30:00Z")).identity()
 
-    with pytest.raises(Exception, match="signs its users in itself"):
-        client(gateway).connect()
+    assert identity.key.name == "prod"
+    assert identity.key.expires_at is not None
+    assert identity.key.expires_at.year == 2027
+
+
+def test_leaves_the_expiry_unset_for_a_key_that_never_expires() -> None:
+    assert client(FakeGateway()).identity().key.expires_at is None
 
 
 def test_rejects_an_empty_end_user() -> None:
-    handle = client(FakeGateway(actor="end_user")).connect()
-
     with pytest.raises(Exception, match="end-user id is required"):
-        handle.for_end_user("   ")
+        client(FakeGateway()).for_end_user("   ")
 
 
 BOTH_PLANES = {
     "gateway": "acme",
     "consumers": [
-        {"slug": "acme", "type": "MCP", "active": True, "url": "https://gw.test/acme/mcp",
-         "acts_for_users": False},
+        {"slug": "acme", "type": "MCP", "active": True, "url": "https://gw.test/acme/mcp"},
         {"slug": "acme-llm", "type": "LLM", "active": True, "url": "https://llm.test/acme-llm/v1"},
     ],
 }
@@ -232,7 +244,7 @@ def test_shows_the_address_it_asked_when_whoami_is_not_there() -> None:
 
 
 def test_end_user_can_read_its_connections_and_mint_a_link() -> None:
-    gateway = FakeGateway(actor="end_user")
+    gateway = FakeGateway()
     alice = client(gateway).connect().for_end_user("user_123")
 
     connections = alice.connections()

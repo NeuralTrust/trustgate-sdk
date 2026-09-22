@@ -13,7 +13,6 @@ import anthropic
 
 from trustgate import (
     ConsentRequiredError,
-    EndUserAgentFactory,
     ToolFormat,
     TrustGate,
     TrustGateError,
@@ -29,10 +28,9 @@ DEFAULT_QUESTION = "find the incident runbook and summarise it"
 MAX_TURNS = 6
 
 
-def answer(handle, client: "anthropic.Anthropic", user_id: str, question: str) -> str:
-    # The handle has no surface of its own: every call belongs to one user, and
-    # the toolkit is read as the first one named rather than as the application.
-    user = handle.for_end_user(user_id)
+def answer(user, client: "anthropic.Anthropic", question: str) -> str:
+    # The toolkit is the application's and identical for everyone it acts for;
+    # what the handle changes is whose upstream account the gateway reaches for.
     toolkit = user.toolkit(ToolFormat.ANTHROPIC_MESSAGES)
 
     # A user who has connected nothing is not an error here, it is a link to
@@ -94,20 +92,18 @@ def main() -> None:
 
     tg = TrustGate()
     try:
-        handle = tg.connect()  # EndUserAgentFactory: no surface without a user
+        # Naming the person is the whole difference from batch.py, and it is a
+        # per-call decision rather than something set on the consumer: the same
+        # key and the same application serve both. The name is yours to choose -
+        # the gateway namespaces it, so it never collides with another
+        # application's.
+        user = tg.for_end_user(user_id)
     except TrustGateError as error:
         sys.exit(f"could not reach the gateway: {error}")
 
-    # The consumer decides this, not the caller: only an application that names
-    # its own users has end users this key can speak for.
-    if not isinstance(handle, EndUserAgentFactory):
-        sys.exit(
-            "this application acts as itself, so it has no end users to answer for - "
-            "see batch.py for that shape."
-        )
     client = anthropic.Anthropic(api_key=api_key)
 
-    print(answer(handle, client, user_id, question))
+    print(answer(user, client, question))
 
 
 if __name__ == "__main__":

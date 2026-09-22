@@ -20,7 +20,6 @@ import sys
 import textwrap
 
 from trustgate import (
-    EndUserAgentFactory,
     MissingToolsError,
     PlaneUnavailableError,
     ToolFormat,
@@ -170,22 +169,13 @@ def main() -> None:
         # from a dead end into the list to put in REQUIRED_TOOLS.
         sys.exit(f"this application cannot run: {error}")
     except UpstreamNotConnectedError as error:
-        sys.exit(
-            f"this application has not signed in to {error.providers}: open {error.connect_url}"
-        )
+        # The message names the servers and who has to connect them, which for
+        # this handle is never the caller.
+        sys.exit(str(error))
     except TrustGateError as error:
         # A wrong URL or a key the gateway does not know lands here. Said as a
         # sentence, because a traceback is not what a first run needs.
         sys.exit(f"could not reach the gateway: {error}")
-
-    # A batch runs as the application. An application that names its own users
-    # has no such actor - there is nobody for a nightly job to be - so this is
-    # the wrong program for it, and saying so beats failing on the first call.
-    if isinstance(agent, EndUserAgentFactory):
-        sys.exit(
-            "this application acts for its own end users, so it has no accounts of its "
-            "own for a batch to run on - see end_user_agent.py for that shape."
-        )
 
     client = model_client(tg)
     issues = queue(agent)

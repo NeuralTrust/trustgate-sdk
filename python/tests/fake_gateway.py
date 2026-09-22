@@ -23,8 +23,12 @@ class Recorded:
 
 @dataclass
 class FakeGateway:
-    #: Which actor /whoami reports for the MCP consumer.
-    actor: str = "application"
+    #: Requires the end-user header on the MCP endpoint, as a per-user server does.
+    require_end_user: bool = False
+    #: What /whoami reports the application still has to connect.
+    upstreams: list[dict[str, Any]] | None = None
+    #: When the calling key retires itself.
+    key_expires_at: str | None = None
     #: Overrides what /whoami answers, for the cases about resolving a key.
     whoami: Any | None = None
     #: Answers /whoami with this status instead of 200.
@@ -64,6 +68,10 @@ class FakeGateway:
                 if self.whoami is not None
                 else {
                     "gateway": "acme",
+                    "key": {
+                        "name": "prod",
+                        **({"expires_at": self.key_expires_at} if self.key_expires_at else {}),
+                    },
                     "consumers": [
                         {
                             "slug": "acme",
@@ -71,8 +79,7 @@ class FakeGateway:
                             "type": "MCP",
                             "active": True,
                             "url": "https://gw.test/acme/mcp",
-                            "acts_for_users": self.actor == "end_user",
-                            **({"identity_source": "app"} if self.actor == "end_user" else {}),
+                            **({"upstreams": self.upstreams} if self.upstreams is not None else {}),
                         }
                     ],
                 },
@@ -98,10 +105,7 @@ class FakeGateway:
                 },
             )
         if url.endswith("/mcp"):
-            # An app-identified consumer refuses any request that names no user,
-            # tools/list included - which is why there is no listing to be had
-            # as the application itself.
-            if self.actor == "end_user" and not headers.get(END_USER_HEADER):
+            if self.require_end_user and not headers.get(END_USER_HEADER):
                 return _json(
                     400,
                     {"error": f"invalid end user: {END_USER_HEADER} header is required"},

@@ -19,7 +19,6 @@ from pydantic_ai.mcp import MCPToolset, StreamableHttpTransport
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from trustgate import (
-    EndUserAgentFactory,
     MissingToolsError,
     PlaneUnavailableError,
     TrustGate,
@@ -65,17 +64,9 @@ async def main() -> None:
     except MissingToolsError as error:
         sys.exit(f"this application cannot run: {error}")
     except UpstreamNotConnectedError as error:
-        sys.exit(
-            f"this application has not signed in to {error.providers}: open {error.connect_url}"
-        )
+        sys.exit(str(error))
     except TrustGateError as error:
         sys.exit(f"could not reach the gateway: {error}")
-
-    if isinstance(handle, EndUserAgentFactory):
-        sys.exit(
-            "this application acts for its own end users, so it has no surface of its own - "
-            "name one with for_end_user() before handing it to a framework."
-        )
 
     # The whole handover: a URL the SDK has already proved reachable, and the
     # headers that authenticate it. The framework does the rest of MCP.

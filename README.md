@@ -89,15 +89,13 @@ both governed.
 
 ## What `connect()` proves before anything runs
 
-1. **Which actor the consumer is.** An application that acts as itself, or one
-   that acts for its own end users. The consumer decides this, not your code,
-   so the SDK reads it off the gateway and hands back the matching handle.
-2. **That the tools you need are there.** The toolkit belongs to an admin and
+1. **That the tools you need are there.** The toolkit belongs to an admin and
    can be narrowed without warning. `requires` turns that into a refusal at
    startup instead of a failure mid-conversation.
-3. **That the accounts are signed in** — for an application acting as itself
-   only. There is no runtime remedy for a missing account in a batch: nobody
-   is there to open a connect link once it is running.
+2. **That the servers have an account to call with.** There is no runtime
+   remedy for a missing account in a batch: nobody is there to open a connect
+   link once it is running. The refusal names the servers and who can connect
+   them, which for this handle is never the caller.
 
 ```python
 try:
@@ -105,18 +103,21 @@ try:
 except MissingToolsError as e:
     sys.exit(f"the consumer is missing {e.missing}; ask your admin")
 except UpstreamNotConnectedError as e:
-    sys.exit(f"nobody has signed in to {e.providers}; open {e.connect_url}")
+    sys.exit(str(e))   # names the servers and who has to connect them
 ```
+
+`tg.identity()` answers the third thing a long run wants to know before it
+starts: `key.expires_at`, which is `None` when the key never expires and
+otherwise the 401 you would have met somewhere in the middle.
 
 ## Agents that act for their users
 
-When the consumer identifies its own end users, `connect()` returns a factory
-rather than a surface: there is no "itself" to act as, and every call belongs
-to one named user.
+Naming the person a call is for is a per-call decision, not a setting: the same
+key and the same application serve both actors, and the gateway reads which one
+from the request.
 
 ```ts
-const handle = await tg.connect()
-const alice = await handle.forEndUser('user_123')
+const alice = await tg.forEndUser('user_123')
 
 try {
   await alice.toolkit(ToolFormat.OpenAIResponses).execute(response.output)
@@ -130,6 +131,11 @@ try {
 The link arrives inside the error, because that is where the gateway mints it.
 `alice.connections()` and `alice.connectLink()` do the same thing ahead of
 time, when you would rather ask than fail.
+
+The name is yours to choose. The gateway namespaces it by application, so two
+applications naming `user_123` never reach the same account — which is also why
+only an application's own credential may assert one: a request carrying a
+person's own token is already that person.
 
 ## Running something
 

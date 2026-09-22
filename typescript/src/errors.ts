@@ -42,19 +42,54 @@ export class MissingToolsError extends TrustGateError {
 }
 
 /**
- * The application itself has upstream accounts left to authorize.
+ * Servers the application cannot call yet, and who has to fix that.
  *
- * Raised only for an application that acts as itself, and only at startup:
- * nobody is present to follow a connect link once a batch is running, so the
- * run either knows beforehand or fails halfway through.
+ * Raised at startup only, for the application handle: nobody is present to
+ * follow a connect link once a batch is running, so the run either knows
+ * beforehand or fails halfway through. The remedy is never the caller's — an
+ * account a whole team rides on is an administrator's to connect, and a
+ * per-caller account wants the person this call is for, which is what
+ * `forEndUser` is.
  */
 export class UpstreamNotConnectedError extends TrustGateError {
-	constructor(readonly providers: string[], readonly connectUrl: string) {
-		super(
-			`this application has not signed in to ${providers.join(', ')}. ` +
-				`Open ${connectUrl} with its API key to connect them.`
+	constructor(readonly upstreams: BlockedUpstream[]) {
+		super(describeBlocked(upstreams))
+	}
+
+	/** The server names, for a caller that wants to log or list them. */
+	get servers(): string[] {
+		return this.upstreams.map((upstream) => upstream.server)
+	}
+}
+
+/** One server from {@link UpstreamNotConnectedError}. */
+export type BlockedUpstream = {
+	server: string
+	blocked?: 'administrator' | 'end_user'
+}
+
+function describeBlocked(upstreams: BlockedUpstream[]): string {
+	const byAdmin = upstreams.filter((upstream) => upstream.blocked === 'administrator')
+	const byUser = upstreams.filter((upstream) => upstream.blocked === 'end_user')
+	const parts: string[] = []
+	if (byAdmin.length > 0) {
+		parts.push(
+			`${names(byAdmin)} use one account for every caller and it is not connected; ` +
+				'an administrator connects it on the server in the console'
 		)
 	}
+	if (byUser.length > 0) {
+		parts.push(
+			`${names(byUser)} keep an account per person, and this call runs as the ` +
+				'application itself; name the person it acts for with forEndUser(…), or ask ' +
+				'an administrator to switch the server to a shared account'
+		)
+	}
+	return parts.length > 0 ? parts.join('. ') + '.' : `${names(upstreams)} are not connected.`
+}
+
+function names(upstreams: BlockedUpstream[]): string {
+	return upstreams.map((upstream) => upstream.server).join(', ')
 }
 
 /**
@@ -83,17 +118,6 @@ export class ToolNotFoundError extends TrustGateError {
 		super(message ?? `the gateway does not serve a tool named "${tool}"`)
 	}
 }
-
-/**
- * The application acts for its users, so it holds no accounts of its own.
- *
- * Reading them would be asking the wrong actor, and an empty answer would read
- * as "connected to nothing" rather than "ask about a user instead".
- */
-export class AppActorUnavailableError extends TrustGateError {}
-
-/** The application acts as itself, so it has no end users to ask about. */
-export class EndUserActorUnavailableError extends TrustGateError {}
 
 /** The connect-attempt limiter refused this call. */
 export class RateLimitedError extends TrustGateError {

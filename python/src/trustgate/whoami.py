@@ -8,10 +8,45 @@ says nothing about, so both have to come from the gateway.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from .config import API_KEY_HEADER, Config
 from .errors import PlaneUnavailableError, TrustGateError
 from .transport import Transport, error_for_response
+
+
+#: Who has to act before a server answers a call that runs as the application.
+#:
+#: ``administrator`` is an instance whose shared account nobody has connected -
+#: no caller can connect it, because it is the account every other caller rides
+#: on. ``end_user`` is an instance that keeps an account per caller, which an
+#: application is not: it names the person it acts for, and the account becomes
+#: theirs to connect.
+BLOCKED_BY_ADMINISTRATOR = "administrator"
+BLOCKED_BY_END_USER = "end_user"
+
+
+@dataclass(frozen=True)
+class KeyUpstream:
+    """One MCP server the application is bound to, and what it is waiting for."""
+
+    server: str
+    provider: str | None = None
+    #: Whose account it reads: ``shared`` or ``user``.
+    account: str = "user"
+    connected: bool = False
+    needs_reconnect: bool = False
+    #: ``administrator``, ``end_user``, or ``None`` when the server is ready.
+    blocked: str | None = None
+
+
+@dataclass(frozen=True)
+class KeyInfo:
+    """The calling key itself. The secret is never echoed."""
+
+    name: str | None = None
+    #: When it retires itself. ``None`` means never.
+    expires_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -25,8 +60,11 @@ class KeyConsumer:
     #: Where it answers. Empty when the gateway publishes no host for its plane.
     url: str = ""
     name: str | None = None
-    acts_for_users: bool = False
-    identity_source: str | None = None
+    #: The servers behind it that read a stored account, answered for this key -
+    #: which is the application itself. ``None`` is not "nothing to connect": it
+    #: is also what a gateway that could not read the accounts answers, and a
+    #: server carrying its own credential is never listed. Read ``blocked``.
+    upstreams: list[KeyUpstream] | None = None
 
 
 @dataclass(frozen=True)
@@ -34,6 +72,7 @@ class KeyIdentity:
     """Everything the key can say about itself."""
 
     gateway: str = ""
+    key: KeyInfo = field(default_factory=KeyInfo)
     consumers: list[KeyConsumer] = field(default_factory=list)
 
 
@@ -57,8 +96,13 @@ def who_am_i(config: Config, transport: Transport) -> KeyIdentity:
     if response.status >= 400:
         raise error_for_response(response)
     body = response.json() or {}
+    key = body.get("key") or {}
     return KeyIdentity(
         gateway=body.get("gateway", ""),
+        key=KeyInfo(
+            name=key.get("name") or None,
+            expires_at=_parse_time(key.get("expires_at")),
+        ),
         consumers=[
             KeyConsumer(
                 slug=item.get("slug", ""),
@@ -66,12 +110,40 @@ def who_am_i(config: Config, transport: Transport) -> KeyIdentity:
                 active=item.get("active", True) is not False,
                 url=item.get("url", "") or "",
                 name=item.get("name") or None,
-                acts_for_users=item.get("acts_for_users") is True,
-                identity_source=item.get("identity_source") or None,
+                upstreams=_upstreams(item.get("upstreams")),
             )
             for item in (body.get("consumers") or [])
         ],
     )
+
+
+def _upstreams(raw: object) -> list[KeyUpstream] | None:
+    if not isinstance(raw, list):
+        return None
+    return [
+        KeyUpstream(
+            server=item.get("server", ""),
+            provider=item.get("provider") or None,
+            account="shared" if item.get("account") == "shared" else "user",
+            connected=item.get("connected") is True,
+            needs_reconnect=item.get("needs_reconnect") is True,
+            blocked=item.get("blocked")
+            if item.get("blocked") in (BLOCKED_BY_ADMINISTRATOR, BLOCKED_BY_END_USER)
+            else None,
+        )
+        for item in raw
+        if isinstance(item, dict)
+    ]
+
+
+def _parse_time(raw: object) -> datetime | None:
+    """RFC3339 as the gateway writes it, or nothing."""
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def select_consumer(

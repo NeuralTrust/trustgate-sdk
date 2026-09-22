@@ -39,17 +39,12 @@ const agent = await tg.connect({ requires: REQUIRES }).catch((error: unknown) =>
 		fail(error.message)
 	}
 	if (error instanceof UpstreamNotConnectedError) {
-		fail(`sign in to ${error.providers.join(', ')} at ${error.connectUrl}`)
+		// The message names the servers and who has to connect them, which for
+		// this handle is never the caller.
+		fail(error.message)
 	}
 	return fail(error)
 })
-
-if (!('toolkit' in agent)) {
-	fail(
-		'this application acts for end users, so it has no toolkit of its own — ' +
-			'see end_user_agent.py for that shape.'
-	)
-}
 
 // Models through the gateway too, so the whole agent is governed by one key —
 // there is no OpenAI key in this file.

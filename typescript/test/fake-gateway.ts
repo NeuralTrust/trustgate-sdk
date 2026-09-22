@@ -1,8 +1,19 @@
 import type { GatewayTool } from '../src/types.js'
 
 export type FakeOptions = {
-	/** Which actor /whoami reports for the MCP consumer. */
-	actor?: 'application' | 'end_user'
+	/** Requires the end-user header on the MCP endpoint, as a per-user server does. */
+	requireEndUser?: boolean
+	/** What /whoami reports the application still has to connect. */
+	upstreams?: {
+		server: string
+		provider?: string
+		account?: 'shared' | 'user'
+		connected?: boolean
+		needs_reconnect?: boolean
+		blocked?: 'administrator' | 'end_user'
+	}[]
+	/** When the calling key retires itself. */
+	keyExpiresAt?: string
 	/** Overrides what /whoami answers, for the cases about resolving a key. */
 	whoami?: unknown
 	/** Answers /whoami with this status instead of 200. */
@@ -44,6 +55,7 @@ export function fakeGateway(options: FakeOptions = {}) {
 				200,
 				options.whoami ?? {
 					gateway: 'acme',
+					key: { name: 'prod', ...(options.keyExpiresAt ? { expires_at: options.keyExpiresAt } : {}) },
 					consumers: [
 						{
 							slug: 'acme',
@@ -51,8 +63,7 @@ export function fakeGateway(options: FakeOptions = {}) {
 							type: 'MCP',
 							active: true,
 							url: 'https://gw.test/acme/mcp',
-							acts_for_users: options.actor === 'end_user',
-							...(options.actor === 'end_user' ? { identity_source: 'app' } : {}),
+							...(options.upstreams ? { upstreams: options.upstreams } : {}),
 						},
 					],
 				}
@@ -75,10 +86,7 @@ export function fakeGateway(options: FakeOptions = {}) {
 			})
 		}
 		if (url.endsWith('/mcp')) {
-			// An app-identified consumer refuses any request that names no user,
-			// tools/list included — which is why there is no listing to be had as
-			// the application itself.
-			if (options.actor === 'end_user' && !headers[END_USER_HEADER]) {
+			if (options.requireEndUser && !headers[END_USER_HEADER]) {
 				return json(400, { error: `invalid end user: ${END_USER_HEADER} header is required` })
 			}
 			const rpc = body as { id: number; method: string; params: Record<string, unknown> }

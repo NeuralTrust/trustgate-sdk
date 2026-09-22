@@ -7,16 +7,11 @@ from dataclasses import dataclass
 from .agent import Agent, EndUserAgent, end_user_agent
 from .config import API_KEY_HEADER, Config, resolve_config
 from .connections import list_connections
-from .errors import (
-    EndUserActorUnavailableError,
-    MissingToolsError,
-    TrustGateError,
-    UpstreamNotConnectedError,
-)
+from .errors import MissingToolsError, UpstreamNotConnectedError
 from .mcp import MCPTransport
 from .transport import Transport, UrllibTransport
-from .types import CONNECTED, Actor, GatewayTool, resolve_tool_name
-from .whoami import KeyConsumer, KeyIdentity, select_consumer, who_am_i
+from .types import GatewayTool, resolve_tool_name
+from .whoami import KeyIdentity, select_consumer, who_am_i
 
 
 @dataclass(frozen=True)
@@ -29,65 +24,6 @@ class LLMEndpoint:
     headers: dict[str, str]
     #: The consumer behind it, for logs and for error messages.
     consumer: str
-
-
-class EndUserAgentFactory:
-    """What ``connect()`` returns for a consumer whose users sign in for themselves.
-
-    It has no tools of its own to offer, because there is no "itself" to offer
-    them to: every call belongs to one named user. Asking for the surface
-    without naming one is the mistake this type exists to prevent.
-    """
-
-    actor = Actor.END_USER
-
-    def __init__(
-        self,
-        config: Config,
-        transport: Transport,
-        consumer: KeyConsumer,
-        tools: list[GatewayTool] | None,
-        requires: list[str] | None = None,
-    ) -> None:
-        self._config = config
-        self._transport = transport
-        self._consumer = consumer
-        self._tools = tools
-        self._requires = list(requires or [])
-
-    @property
-    def slug(self) -> str:
-        return self._consumer.slug
-
-    @property
-    def tools(self) -> list[GatewayTool]:
-        """The toolkit, which is the same for every user of this application."""
-        if self._tools is None:
-            raise TrustGateError(
-                "this application names its own users, so its toolkit cannot be read "
-                "without being one of them: call for_end_user(...) and read it from the "
-                "handle."
-            )
-        return self._tools
-
-    def for_end_user(self, end_user: str) -> EndUserAgent:
-        agent = end_user_agent(
-            self._config,
-            self._transport,
-            self._consumer.slug,
-            end_user,
-            self._consumer.url,
-            self._tools or [],
-        )
-        if self._tools is None:
-            # The toolkit is the same for every user, but the endpoint refuses a
-            # request that names none - so the first handle reads it, the rest
-            # share it, and the `requires` check connect() could not run lands
-            # here instead.
-            tools = agent.refresh()
-            _check_requires(tools, self._requires)
-            self._tools = tools
-        return agent
 
 
 class TrustGate:
@@ -140,54 +76,58 @@ class TrustGate:
             consumer=consumer.slug,
         )
 
-    def connect(self, requires: list[str] | None = None) -> Agent | EndUserAgentFactory:
-        """Opens the agent's surface and proves it is usable before anything runs.
+    def connect(self, requires: list[str] | None = None) -> Agent:
+        """Opens the application's own surface and proves it is usable.
 
-        Three things happen here, and all three are the kind that are cheap now
-        and expensive later: which actor this consumer is (it decides, not the
-        caller), whether the tools the agent needs are actually on its toolkit,
-        and - for an application acting as itself - whether its upstream
-        accounts are signed in. That last one has no runtime remedy: nobody is
-        present to open a connect link once a batch is going.
+        Two things happen here, and both are the kind that are cheap now and
+        expensive later: whether the tools the agent needs are actually on its
+        toolkit, and whether the servers behind it have an account to call
+        with. The second has no runtime remedy for this handle - nobody is
+        present to open a connect link once a batch is going - which is the
+        whole reason it is checked at startup.
+
+        This is the application actor: the key and nothing else, so the gateway
+        runs the calls as ``app:<consumer_id>``. For a call on behalf of a
+        person, use :meth:`for_end_user`; both work on the same consumer,
+        because who a request runs as is read from the request rather than
+        declared anywhere.
         """
         consumer = select_consumer(
             self.identity(), "MCP", self._config.mcp_consumer, "mcp_consumer"
         )
-
-        # An application that names its own users has no surface of its own to
-        # ask on: every request to it must say which user it is for, and one
-        # that does not is refused. So there is nothing to list here, and the
-        # preflight moves to the first named user.
-        if consumer.identity_source == "app":
-            return EndUserAgentFactory(
-                self._config, self._transport, consumer, None, list(requires or [])
-            )
-
         transport = MCPTransport(self._config, self._transport, consumer.url)
         tools = transport.list_tools()
         _check_requires(tools, list(requires or []))
 
-        # The consumer says which actor it is, so there is nothing to infer and
-        # nothing for the caller to configure wrongly. What is left here acting
-        # for users signs them in itself, and this key is not one of them: the
-        # end-user header means nothing on such a consumer, so a handle minted
-        # from it would quietly run every user as the application.
-        if consumer.acts_for_users:
-            raise EndUserActorUnavailableError(
-                f'"{consumer.slug}" signs its users in itself, so an API key cannot act '
-                "for one of them. A key reaches this consumer as the application, which "
-                "is not who its calls are supposed to be for."
-            )
+        blocked = [up for up in (consumer.upstreams or []) if up.blocked]
+        if blocked:
+            raise UpstreamNotConnectedError(blocked)
 
         connections = list_connections(self._config, self._transport, consumer.slug)
-        pending = [c for c in connections if c.status != CONNECTED]
-        if pending:
-            raise UpstreamNotConnectedError(
-                [c.provider for c in pending], _connect_page(consumer)
-            )
         return Agent(
             self._config, self._transport, consumer.slug, transport, tools, connections
         )
+
+    def for_end_user(
+        self, end_user: str, requires: list[str] | None = None
+    ) -> EndUserAgent:
+        """The handle for one named person, on the same consumer and the same key.
+
+        The name is asserted by this application and not verified, so the
+        gateway namespaces it: two applications naming ``user_123`` never share
+        an account. What that person still has to connect is theirs to connect
+        - the handle's own connections mint the link to put in front of them -
+        which is why there is no startup preflight here and one in
+        :meth:`connect`.
+        """
+        consumer = select_consumer(
+            self.identity(), "MCP", self._config.mcp_consumer, "mcp_consumer"
+        )
+        agent = end_user_agent(
+            self._config, self._transport, consumer.slug, end_user, consumer.url, []
+        )
+        _check_requires(agent.refresh(), list(requires or []))
+        return agent
 
 
 def _check_requires(tools: list[GatewayTool], requires: list[str]) -> None:
@@ -201,10 +141,3 @@ def _check_requires(tools: list[GatewayTool], requires: list[str]) -> None:
     missing = [name for name in requires if resolve_tool_name(name, tools) not in names]
     if missing:
         raise MissingToolsError(missing, sorted(names))
-
-
-def _connect_page(consumer: KeyConsumer) -> str:
-    """The page an operator opens to sign the application in to its own accounts."""
-    if consumer.url.endswith("/mcp"):
-        return consumer.url[: -len("/mcp")] + "/connect"
-    return consumer.url
