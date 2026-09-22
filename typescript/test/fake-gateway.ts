@@ -24,6 +24,9 @@ export type FakeOptions = {
 	callResults?: Record<string, unknown>
 	/** JSON-RPC errors for tools/call, keyed by tool name. */
 	callErrors?: Record<string, { code: number; message: string; data?: unknown }>
+	/** Fails tools/list with this JSON-RPC error, as a server with no account for
+	 *  the caller can make the whole listing fail. */
+	listError?: { code: number; message: string; data?: unknown }
 	/** Frames the tools/call response as an event stream, as the gateway does
 	 *  when it has a surface change to announce on the same response. */
 	frameAsEventStream?: boolean
@@ -91,6 +94,7 @@ export function fakeGateway(options: FakeOptions = {}) {
 			}
 			const rpc = body as { id: number; method: string; params: Record<string, unknown> }
 			if (rpc.method === 'tools/list') {
+				if (options.listError) return rpcError(rpc.id, options.listError, false)
 				return rpcOK(rpc.id, { tools }, false)
 			}
 			if (rpc.method === 'tools/call') {

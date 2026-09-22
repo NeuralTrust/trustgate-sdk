@@ -68,28 +68,46 @@ export type BlockedUpstream = {
 	blocked?: 'administrator' | 'end_user'
 }
 
+/**
+ * Says who fixes each server, with the line of code when it is the caller.
+ *
+ * Read on a terminal at startup, so it is written to be acted on there: the
+ * per-user case is the one a developer hits first, and the fix is one call
+ * they have not seen yet, so the call is in the message.
+ */
 function describeBlocked(upstreams: BlockedUpstream[]): string {
 	const byAdmin = upstreams.filter((upstream) => upstream.blocked === 'administrator')
 	const byUser = upstreams.filter((upstream) => upstream.blocked === 'end_user')
 	const parts: string[] = []
-	if (byAdmin.length > 0) {
-		parts.push(
-			`${names(byAdmin)} use one account for every caller and it is not connected; ` +
-				'an administrator connects it on the server in the console'
-		)
-	}
 	if (byUser.length > 0) {
 		parts.push(
-			`${names(byUser)} keep an account per person, and this call runs as the ` +
-				'application itself; name the person it acts for with forEndUser(…), or ask ' +
-				'an administrator to switch the server to a shared account'
+			`${names(byUser)} ${verb(byUser, 'keeps', 'keep')} one account per user, and ` +
+				'connect() runs as the application, which has none there.\n' +
+				'\n' +
+				'Run as the person the work is for:\n' +
+				'\n' +
+				"    const agent = await tg.forEndUser('user_123')\n" +
+				'\n' +
+				`or have an administrator set ${names(byUser)} to a shared account in the ` +
+				"console (Registry, on the server's instance), and connect() works as it is."
 		)
 	}
-	return parts.length > 0 ? parts.join('. ') + '.' : `${names(upstreams)} are not connected.`
+	if (byAdmin.length > 0) {
+		parts.push(
+			`${names(byAdmin)} ${verb(byAdmin, 'uses', 'use')} one shared account for every ` +
+				'caller, and nobody has connected it yet. An administrator connects it in the ' +
+				"console: Registry, on the server's instance, Connect."
+		)
+	}
+	return parts.length > 0 ? parts.join('\n\n') : `${names(upstreams)} ${verb(upstreams, 'is', 'are')} not connected.`
 }
 
 function names(upstreams: BlockedUpstream[]): string {
-	return upstreams.map((upstream) => upstream.server).join(', ')
+	return upstreams.map((upstream) => `"${upstream.server}"`).join(', ')
+}
+
+function verb(upstreams: BlockedUpstream[], one: string, many: string): string {
+	return upstreams.length === 1 ? one : many
 }
 
 /**

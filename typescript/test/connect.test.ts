@@ -53,7 +53,7 @@ describe('connect', () => {
 		const error = await tg.connect().catch((e) => e)
 		expect(error).toBeInstanceOf(UpstreamNotConnectedError)
 		expect(error.servers).toEqual(['Linear'])
-		expect(String(error)).toMatch(/an administrator connects it/)
+		expect(String(error)).toMatch(/An administrator connects it/)
 	})
 
 	// A server that keeps an account per person has nothing for an application,
@@ -66,7 +66,27 @@ describe('connect', () => {
 
 		const error = await tg.connect().catch((e) => e)
 		expect(error).toBeInstanceOf(UpstreamNotConnectedError)
-		expect(String(error)).toMatch(/forEndUser/)
+		// The fix is one call the developer has not met yet, so it is in the message.
+		expect(String(error)).toContain("const agent = await tg.forEndUser('user_123')")
+	})
+
+	// The gateway can refuse the whole listing over a server the application has
+	// no account on. That refusal says nothing about who fixes it, so the account
+	// check has to come first — otherwise the typed error never gets its turn.
+	it('names the account before the listing can fail over it', async () => {
+		const gateway = fakeGateway({
+			upstreams: [{ server: 'Linear', account: 'user', connected: false, blocked: 'end_user' }],
+			listError: {
+				code: -32003,
+				message: 'mcp: "Linear" uses a per-user account and this request runs as the application itself',
+			},
+		})
+		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
+
+		const error = await tg.connect().catch((e) => e)
+		expect(error).toBeInstanceOf(UpstreamNotConnectedError)
+		expect(error.servers).toEqual(['Linear'])
+		expect(gateway.requests.some((r) => (r.body as { method?: string } | undefined)?.method === 'tools/list')).toBe(false)
 	})
 
 	it('counts an account that has gone stale as still blocking', async () => {
