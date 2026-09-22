@@ -18,12 +18,29 @@ from .whoami import KeyIdentity, KeyUpstream, select_consumer, who_am_i
 class LLMEndpoint:
     """What the LLM plane needs to be handed to a provider's own client."""
 
-    #: Pass as ``base_url`` to the OpenAI or Anthropic client.
+    #: Pass as ``base_url`` to the OpenAI client. It ends in ``/v1``.
     base_url: str
     api_key: str
     headers: dict[str, str]
     #: The consumer behind it, for logs and for error messages.
     consumer: str
+
+    @property
+    def anthropic_base_url(self) -> str:
+        """Pass as ``base_url`` to the Anthropic client.
+
+        The two clients disagree on where the version goes. OpenAI's is handed
+        a base that already ends in ``/v1`` and appends ``/chat/completions``;
+        Anthropic's appends ``/v1/messages`` to what it is given, so handing it
+        ``base_url`` asks the gateway for ``/v1/v1/messages``. This is the
+        application's root, the one every dialect but OpenAI's hangs from.
+        """
+        return _without_version(self.base_url)
+
+
+def _without_version(url: str) -> str:
+    trimmed = url.rstrip("/")
+    return trimmed[: -len("/v1")] if trimmed.endswith("/v1") else trimmed
 
 
 class TrustGate:

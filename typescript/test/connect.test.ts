@@ -215,6 +215,16 @@ describe('resolving a key', () => {
 		expect(llm.apiKey).toBe('ag_secret')
 	})
 
+	// The Anthropic client appends /v1/messages to what it is given, so the base
+	// it needs stops at the application; the OpenAI one keeps the /v1 it expects.
+	it('hands each provider client the base it extends', async () => {
+		const gateway = fakeGateway({ whoami: bothPlanes })
+		const llm = await new TrustGate({ ...base, fetch: gateway.fetch }).llm()
+
+		expect(llm.baseUrl).toBe('https://llm.test/acme-llm/v1')
+		expect(llm.anthropicBaseUrl).toBe('https://llm.test/acme-llm')
+	})
+
 	it('asks the key once, however many planes are read', async () => {
 		const gateway = fakeGateway({ whoami: bothPlanes })
 		const tg = new TrustGate({ ...base, fetch: gateway.fetch })

@@ -216,6 +216,15 @@ def test_finds_both_planes_behind_one_key() -> None:
     assert llm.api_key == "ag_secret"
 
 
+# The Anthropic client appends /v1/messages to what it is given, so the base it
+# needs stops at the application; the OpenAI one keeps the /v1 it expects.
+def test_hands_each_provider_client_the_base_it_extends() -> None:
+    llm = client(FakeGateway(whoami=BOTH_PLANES)).llm()
+
+    assert llm.base_url == "https://llm.test/acme-llm/v1"
+    assert llm.anthropic_base_url == "https://llm.test/acme-llm"
+
+
 def test_asks_the_key_once_however_many_planes_are_read() -> None:
     gateway = FakeGateway(whoami=BOTH_PLANES)
     tg = client(gateway)

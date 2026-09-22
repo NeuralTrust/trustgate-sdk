@@ -150,7 +150,7 @@ def model_client(tg: TrustGate):
             )
         )
     log.info("models through %s", llm.consumer)
-    return anthropic.Anthropic(base_url=llm.base_url, api_key=llm.api_key)
+    return anthropic.Anthropic(base_url=llm.anthropic_base_url, api_key=llm.api_key)
 
 
 def main() -> None:
