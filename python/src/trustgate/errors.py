@@ -8,6 +8,11 @@ came back" but "is this mine to fix, my user's, or my admin's".
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - import cycle, types only
+    from .whoami import KeyUpstream
+
 __all__ = [
     "TrustGateError",
     "AuthenticationError",
@@ -17,8 +22,6 @@ __all__ = [
     "ConsentRequiredError",
     "PolicyBlockedError",
     "ToolNotFoundError",
-    "AppActorUnavailableError",
-    "EndUserActorUnavailableError",
     "RateLimitedError",
     "ServiceUnavailableError",
     "TrustGateServerError",
@@ -67,20 +70,48 @@ class MissingToolsError(TrustGateError):
 
 
 class UpstreamNotConnectedError(TrustGateError):
-    """The application itself has upstream accounts left to authorize.
+    """Servers the application cannot call yet, and who has to fix that.
 
-    Raised only for an application that acts as itself, and only at startup:
-    nobody is present to follow a connect link once a batch is running, so the
-    run either knows beforehand or fails halfway through.
+    Raised at startup only, for the application handle: nobody is present to
+    follow a connect link once a batch is running, so the run either knows
+    beforehand or fails halfway through. The remedy is never the caller's - an
+    account a whole team rides on is an administrator's to connect, and a
+    per-caller account wants the person this call is for, which is what
+    ``for_end_user`` is.
     """
 
-    def __init__(self, providers: list[str], connect_url: str) -> None:
-        super().__init__(
-            f"this application has not signed in to {', '.join(providers)}. "
-            f"Open {connect_url} with its API key to connect them."
+    def __init__(self, upstreams: list["KeyUpstream"]) -> None:
+        super().__init__(_describe_blocked(upstreams))
+        self.upstreams = upstreams
+
+    @property
+    def servers(self) -> list[str]:
+        """The server names, for a caller that wants to log or list them."""
+        return [upstream.server for upstream in self.upstreams]
+
+
+def _describe_blocked(upstreams: list["KeyUpstream"]) -> str:
+    by_admin = [u for u in upstreams if u.blocked == "administrator"]
+    by_user = [u for u in upstreams if u.blocked == "end_user"]
+    parts: list[str] = []
+    if by_admin:
+        parts.append(
+            f"{_names(by_admin)} use one account for every caller and it is not "
+            "connected; an administrator connects it on the server in the console"
         )
-        self.providers = providers
-        self.connect_url = connect_url
+    if by_user:
+        parts.append(
+            f"{_names(by_user)} keep an account per person, and this call runs as the "
+            "application itself; name the person it acts for with for_end_user(...), "
+            "or ask an administrator to switch the server to a shared account"
+        )
+    if not parts:
+        return f"{_names(upstreams)} are not connected."
+    return ". ".join(parts) + "."
+
+
+def _names(upstreams: list["KeyUpstream"]) -> str:
+    return ", ".join(upstream.server for upstream in upstreams)
 
 
 class ConsentRequiredError(TrustGateError):
@@ -112,14 +143,6 @@ class ToolNotFoundError(TrustGateError):
     def __init__(self, tool: str, message: str | None = None) -> None:
         super().__init__(message or f'the gateway does not serve a tool named "{tool}"')
         self.tool = tool
-
-
-class AppActorUnavailableError(TrustGateError):
-    """The application acts for its users, so it holds no accounts of its own."""
-
-
-class EndUserActorUnavailableError(TrustGateError):
-    """The application acts as itself, so it has no end users to ask about."""
 
 
 class RateLimitedError(TrustGateError):

@@ -19,15 +19,21 @@ key are asked for: `tg.identity()` reads `GET /whoami` once and remembers it.
 
 ```python
 identity = tg.identity()
-# KeyConsumer(slug="support-agent", type="MCP", url="https://…/support-agent/mcp", acts_for_users=False)
+# identity.key -> KeyInfo(name="prod", expires_at=None)   # None means never
+# KeyConsumer(slug="support-agent", type="MCP", url="https://…/support-agent/mcp",
+#             upstreams=[KeyUpstream(server="Notion", account="shared", connected=True)])
 # KeyConsumer(slug="support-llm",   type="LLM", url="https://…/support-llm/v1")
 ```
+
+`key.expires_at` is the 401 you would otherwise meet mid-run, and `upstreams`
+is the refusal you would otherwise meet on the first tool call — both answered
+before anything starts.
 
 `mcp_consumer` and `llm_consumer` (or `TRUSTGATE_MCP_CONSUMER` /
 `TRUSTGATE_LLM_CONSUMER`) are only needed when a key reaches two consumers of
 the same plane — the SDK names them and refuses rather than guessing.
 
-## An agent that acts as itself
+## An agent that acts as the application
 
 ```python
 agent = tg.connect(requires=["search"])
@@ -46,7 +52,7 @@ A batch that must not stop halfway:
 try:
     agent = tg.connect(requires=["search"])
 except UpstreamNotConnectedError as error:
-    sys.exit(f"open {error.connect_url} and sign in to {error.providers}")
+    sys.exit(str(error))   # names the servers and who has to connect them
 
 for row in rows:
     agent.call_tool("search", {"query": row.query})
@@ -58,20 +64,22 @@ gateway's, so `requires` and `call_tool` take the name the server itself gave th
 tool and add it; naming a tool two of your servers serve is the one case they
 ask instead.
 
-## An agent that acts for its users
+## An agent acting for one of its users
 
 ```python
-handle = tg.connect()                     # EndUserAgentFactory
-alice = handle.for_end_user("user_123")
+alice = tg.for_end_user("user_123")
+# or, from an agent you already have - no round trip, same toolkit:
+bob = agent.for_end_user("user_456")
 
 alice.connections()
 alice.connect_link("com.notion/mcp")
 alice.toolkit(ToolFormat.ANTHROPIC_MESSAGES)
 ```
 
-Such an application has no surface of its own, so there is nothing for
-`connect()` to read: the toolkit — and with it the `requires` check — is read as
-the first user named, and the rest share it.
+Both handles work on the same consumer and the same key: which actor a call is
+comes from the call, not from anything configured on the consumer. The name is
+yours to choose and the gateway namespaces it, so two applications naming
+`user_123` never reach the same account.
 
 ## The model call, with tools
 
@@ -107,11 +115,10 @@ tests use a fake one. It is also where a retry policy or a proxy belongs.
 | Class | When |
 |---|---|
 | `MissingToolsError` | `requires` names a tool the consumer does not serve |
-| `UpstreamNotConnectedError` | the application's own accounts are not signed in |
+| `UpstreamNotConnectedError` | a server the application calls has no account behind it; `servers` names them and the message says who connects it |
 | `ConsentRequiredError` | an end user has not connected; carries `connect_url` |
 | `PolicyBlockedError` | a gateway policy refused the call |
 | `ToolNotFoundError` | the tool left the toolkit under a running agent |
-| `AppActorUnavailableError` / `EndUserActorUnavailableError` | wrong actor for this consumer |
 | `PlaneUnavailableError` | the key reaches no consumer of that plane |
 | `AuthenticationError`, `RateLimitedError`, `ServiceUnavailableError`, `TrustGateServerError` | as named |
 

@@ -21,13 +21,6 @@ gatewayEnv()
 const tg = new TrustGate()
 const application = await tg.connect({ requires: REQUIRES }).catch(fail)
 
-if (!('mcp' in application)) {
-	fail(
-		'this application acts for end users, so it has no surface of its own — ' +
-			'name one with await forEndUser() before handing it to a framework.'
-	)
-}
-
 // The gateway speaks the OpenAI API, so the framework's own client points at it.
 // Set through the key and the base-URL variable rather than by handing over a
 // client: the agents SDK bundles its own copy of `openai`, and two copies of a

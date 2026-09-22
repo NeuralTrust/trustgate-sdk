@@ -8,13 +8,11 @@ upstream account is not connected.
 """
 
 from .agent import Agent, EndUserAgent, Toolkit
-from .client import EndUserAgentFactory, LLMEndpoint, TrustGate
+from .client import LLMEndpoint, TrustGate
 from .config import API_KEY_HEADER, END_USER_HEADER
 from .errors import (
-    AppActorUnavailableError,
     AuthenticationError,
     ConsentRequiredError,
-    EndUserActorUnavailableError,
     InvalidRequestError,
     MissingToolsError,
     PlaneUnavailableError,
@@ -30,7 +28,14 @@ from .formats import ConversionWarning, adapter_for, result_to_text
 from .mcp import MCPTransport
 from .schema import StrictResult, inline_refs, strip_injected_nulls, to_strict
 from .transport import Response, Transport, UrllibTransport
-from .whoami import KeyConsumer, KeyIdentity, select_consumer, who_am_i
+from .whoami import (
+    KeyConsumer,
+    KeyIdentity,
+    KeyInfo,
+    KeyUpstream,
+    select_consumer,
+    who_am_i,
+)
 from .types import (
     Actor,
     ConnectLink,
@@ -47,7 +52,6 @@ __all__ = [
     "Actor",
     "Agent",
     "API_KEY_HEADER",
-    "AppActorUnavailableError",
     "AuthenticationError",
     "ConnectLink",
     "Connection",
@@ -55,12 +59,12 @@ __all__ = [
     "ConversionWarning",
     "END_USER_HEADER",
     "Endpoint",
-    "EndUserActorUnavailableError",
     "EndUserAgent",
-    "EndUserAgentFactory",
     "GatewayTool",
     "KeyConsumer",
     "KeyIdentity",
+    "KeyInfo",
+    "KeyUpstream",
     "InvalidRequestError",
     "LLMEndpoint",
     "MCPTransport",

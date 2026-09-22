@@ -1,19 +1,14 @@
 /**
- * An assistant that acts for its own end users.
+ * An assistant acting for one of its own end users.
  *
- * The consumer identifies them, so every call names one, and the moment a user
+ * The application names the person each call is for, and the moment that person
  * has not connected an account is a link to show them rather than a failure.
  *
  *     npm run end-user
  *     npm run end-user -- user_123 "what changed in the runbook this week?"
  */
 import OpenAI from 'openai'
-import {
-	ConsentRequiredError,
-	EndUserAgentFactory,
-	ToolFormat,
-	TrustGate,
-} from '@neuraltrust/trustgate'
+import { ConsentRequiredError, ToolFormat, TrustGate } from '@neuraltrust/trustgate'
 
 import { fail, gatewayEnv } from './config.ts'
 
@@ -29,20 +24,12 @@ const [endUser = DEFAULT_USER, question = DEFAULT_QUESTION] = process.argv.slice
 gatewayEnv()
 
 const tg = new TrustGate()
-const factory = await tg.connect().catch(fail)
 
-// The consumer decides this, not the caller: only an application that names its
-// own users has end users this key can speak for.
-if (!(factory instanceof EndUserAgentFactory)) {
-	fail(
-		'this application acts as itself, so it has no end users to answer for — ' +
-			'see openai-responses.ts for that shape.'
-	)
-}
-
-// Awaits because the toolkit is read here: such an application has no surface of
-// its own to read it from, so the first named user reads it and the rest share.
-const user = await factory.forEndUser(endUser).catch(fail)
+// Naming the person is the whole difference from openai-responses.ts, and it is
+// a per-call decision rather than something set on the consumer: the same key
+// and the same application serve both. The name is yours to choose — the
+// gateway namespaces it, so it never collides with another application's.
+const user = await tg.forEndUser(endUser).catch(fail)
 
 // A user who has connected nothing is not an error here, it is a link to show
 // them. The gateway does offer each unconnected server as a trustgate_connect_*

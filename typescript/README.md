@@ -18,16 +18,23 @@ Two values, or none if they are in the environment. The consumers behind the
 key are asked for: `tg.identity()` reads `GET /whoami` once and remembers it.
 
 ```ts
-const { gateway, consumers } = await tg.identity()
-// [{ slug: 'support-agent', type: 'MCP', url: 'https://…/support-agent/mcp', actsForUsers: false },
+const { gateway, key, consumers } = await tg.identity()
+// key: { name: 'prod', expiresAt: Date | undefined }   — undefined means never
+// consumers:
+// [{ slug: 'support-agent', type: 'MCP', url: 'https://…/support-agent/mcp',
+//    upstreams: [{ server: 'Notion', account: 'shared', connected: true }] },
 //  { slug: 'support-llm',   type: 'LLM', url: 'https://…/support-llm/v1' }]
 ```
+
+`key.expiresAt` is the 401 you would otherwise meet mid-run, and `upstreams`
+is the refusal you would otherwise meet on the first tool call — both answered
+before anything starts.
 
 `mcpConsumer` and `llmConsumer` (or `TRUSTGATE_MCP_CONSUMER` /
 `TRUSTGATE_LLM_CONSUMER`) are only needed when a key reaches two consumers of
 the same plane — the SDK names them and refuses rather than guessing.
 
-## An agent that acts as itself
+## An agent that acts as the application
 
 ```ts
 const agent = await tg.connect({ requires: ['search'] })
@@ -46,21 +53,25 @@ gateway's, so `requires` and `callTool` take the name the server itself gave the
 tool and add it; naming a tool two of your servers serve is the one case they
 ask instead.
 
-## An agent that acts for its users
+## An agent acting for one of its users
 
 ```ts
-const handle = await tg.connect()           // EndUserAgentFactory
-const alice = await handle.forEndUser('user_123')
+const alice = await tg.forEndUser('user_123')
+// or, from an agent you already have — no round trip, same toolkit:
+const bob = agent.forEndUser('user_456')
 
 await alice.connections()
 await alice.connectLink('com.notion/mcp')
 alice.toolkit(ToolFormat.AnthropicMessages)
 ```
 
-Each user needs their own handle: the MCP endpoint fixes its headers when a
-client connects, and the user travels in one. `forEndUser` awaits because the
-toolkit is read here — such an application has no surface of its own to read it
-from, so the first named user reads it and the rest share it.
+Both handles work on the same consumer and the same key: which actor a call is
+comes from the call, not from anything configured on the consumer. Each user
+needs their own handle because the MCP endpoint fixes its headers when a client
+connects, and the user travels in one.
+
+The name is yours to choose and the gateway namespaces it, so two applications
+naming `user_123` never reach the same account.
 
 ## The provider's types
 
@@ -101,11 +112,10 @@ strict asked for are stripped unless the tool's own schema accepts them.
 | Class | When |
 |---|---|
 | `MissingToolsError` | `requires` names a tool the consumer does not serve |
-| `UpstreamNotConnectedError` | the application's own accounts are not signed in |
+| `UpstreamNotConnectedError` | a server the application calls has no account behind it; `servers` names them and the message says who connects it |
 | `ConsentRequiredError` | an end user has not connected; carries `connectUrl` |
 | `PolicyBlockedError` | a gateway policy refused the call |
 | `ToolNotFoundError` | the tool left the toolkit under a running agent |
-| `AppActorUnavailableError` / `EndUserActorUnavailableError` | wrong actor for this consumer |
 | `PlaneUnavailableError` | the key reaches no consumer of that plane |
 | `AuthenticationError`, `RateLimitedError`, `ServiceUnavailableError`, `TrustGateServerError` | as named |
 

@@ -6,7 +6,6 @@ from typing import Any
 
 from .config import END_USER_HEADER, Config
 from .connections import create_connect_link, list_connections, require_end_user
-from .errors import EndUserActorUnavailableError
 from .formats import ConversionWarning, ToolResult, adapter_for, restore_arguments
 from .mcp import MCPTransport
 from .schema import Schema
@@ -139,9 +138,20 @@ class Agent(_ToolSurface):
         return list_connections(self._config, self._http, self.slug)
 
     def for_end_user(self, end_user: str) -> "EndUserAgent":
-        raise EndUserActorUnavailableError(
-            "this consumer acts as the application itself, so it has no end users. "
-            "An admin configures that on the consumer (identity.source = app)."
+        """The same application, acting for one named person.
+
+        No round trip and no second surface to read: the toolkit an admin bound
+        is the application's, identical for everyone it acts for. What changes
+        is one header, and with it whose upstream account the gateway reaches
+        for.
+        """
+        return end_user_agent(
+            self._config,
+            self._http,
+            self.slug,
+            end_user,
+            self._transport.url,
+            self.tools,
         )
 
 

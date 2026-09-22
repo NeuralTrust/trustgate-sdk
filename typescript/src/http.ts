@@ -1,8 +1,6 @@
 import { API_KEY_HEADER, type ResolvedConfig } from './config.js'
 import {
-	AppActorUnavailableError,
 	AuthenticationError,
-	EndUserActorUnavailableError,
 	InvalidRequestError,
 	RateLimitedError,
 	ServiceUnavailableError,
@@ -66,10 +64,6 @@ function errorForResponse(response: Response, body: ErrorBody | undefined, raw: 
 			return new AuthenticationError(message, { status, code })
 		case 'invalid_request':
 			return new InvalidRequestError(message, { status, code })
-		case 'end_users_not_identified':
-			return new EndUserActorUnavailableError(message, { status, code })
-		case 'consumer_acts_for_users':
-			return new AppActorUnavailableError(message, { status, code })
 		case 'unavailable':
 			return new ServiceUnavailableError(message, { status, code })
 	}

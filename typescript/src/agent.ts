@@ -1,6 +1,6 @@
 import { END_USER_HEADER, type ResolvedConfig } from './config.js'
 import { createConnectLink, listConnections, requireEndUser } from './connections.js'
-import { AppActorUnavailableError, EndUserActorUnavailableError, ToolNotFoundError } from './errors.js'
+import { ToolNotFoundError } from './errors.js'
 import { adapterFor, restoreArguments, type ConversionWarning, type ToolResult } from './formats.js'
 import { MCPTransport } from './mcp.js'
 import {
@@ -171,11 +171,15 @@ export class Agent {
 		return listConnections(this.config, this.slug, undefined, signal)
 	}
 
-	forEndUser(_endUser: string): never {
-		throw new EndUserActorUnavailableError(
-			'this consumer acts as the application itself, so it has no end users. ' +
-				'An admin configures that on the consumer (identity.source = app).'
-		)
+	/**
+	 * The same application, acting for one named person.
+	 *
+	 * No round trip and no second surface to read: the toolkit an admin bound
+	 * is the application's, identical for everyone it acts for. What changes is
+	 * one header, and with it whose upstream account the gateway reaches for.
+	 */
+	forEndUser(endUser: string): EndUserAgent {
+		return endUserAgent(this.config, this.slug, endUser, this.transport.url, this.tools)
 	}
 }
 
@@ -258,11 +262,6 @@ export function endUserAgent(
 	const endUser = requireEndUser(rawEndUser)
 	const transport = new MCPTransport(config, url, { [END_USER_HEADER]: endUser })
 	return new EndUserAgent(config, slug, endUser, transport, tools)
-}
-
-/** Raised by the application handle when someone asks it for a user's view. */
-export function refuseAppActor(message: string): never {
-	throw new AppActorUnavailableError(message)
 }
 
 export { ToolNotFoundError }

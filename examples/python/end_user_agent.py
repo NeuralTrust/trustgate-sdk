@@ -1,6 +1,6 @@
-"""An assistant that acts for its own end users.
+"""An assistant acting for one of its own end users.
 
-The consumer identifies them, so every call names one, and the moment a user
+The application names the person each call is for, and the moment that person
 has not connected an account is a link to show them rather than a failure.
 
     uv run end_user_agent.py
@@ -13,7 +13,7 @@ import anthropic
 
 from trustgate import (
     ConsentRequiredError,
-    EndUserAgentFactory,
+    EndUserAgent,
     ToolFormat,
     TrustGate,
     TrustGateError,
@@ -29,13 +29,9 @@ DEFAULT_QUESTION = "find the last issues in Linear"
 MAX_TURNS = 10
 
 
-def answer(
-    factory: EndUserAgentFactory, client: "anthropic.Anthropic", user_id: str, question: str
-) -> str:
-    # connect() returns a factory: it has no surface of its own. Every call
-    # belongs to one user, and the toolkit is read as the first one named
-    # rather than as the application.
-    user = factory.for_end_user(user_id)
+def answer(user: EndUserAgent, client: "anthropic.Anthropic", question: str) -> str:
+    # The toolkit is the application's and identical for everyone it acts for;
+    # what the handle changes is whose upstream account the gateway reaches for.
     toolkit = user.toolkit(ToolFormat.ANTHROPIC_MESSAGES)
 
     # A user who has connected nothing is not an error here, it is a link to
@@ -97,20 +93,18 @@ def main() -> None:
 
     tg = TrustGate()
     try:
-        factory = tg.connect()
+        # Naming the person is the whole difference from batch.py, and it is a
+        # per-call decision rather than something set on the consumer: the same
+        # key and the same application serve both. The name is yours to choose -
+        # the gateway namespaces it, so it never collides with another
+        # application's.
+        user = tg.for_end_user(user_id)
     except TrustGateError as error:
         sys.exit(f"could not reach the gateway: {error}")
 
-    # The consumer decides this, not the caller: only an application that names
-    # its own users has end users this key can speak for.
-    if not isinstance(factory, EndUserAgentFactory):
-        sys.exit(
-            "this application acts as itself, so it has no end users to answer for - "
-            "see batch.py for that shape."
-        )
     client = anthropic.Anthropic(api_key=api_key)
 
-    print(answer(factory, client, user_id, question))
+    print(answer(user, client, question))
 
 
 if __name__ == "__main__":

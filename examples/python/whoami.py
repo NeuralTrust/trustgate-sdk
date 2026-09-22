@@ -23,25 +23,28 @@ def main() -> None:
         sys.exit(f"could not reach the gateway: {error}")
 
     print(f"gateway: {identity.gateway}")
+    expiry = identity.key.expires_at.isoformat() if identity.key.expires_at else "never"
+    print(f"key:     {identity.key.name or '(unnamed)'} - expires {expiry}")
     if not identity.consumers:
         sys.exit("this key reaches no consumer. It may be disabled, or belong to another gateway.")
 
     for consumer in identity.consumers:
-        # Which actor a consumer is decides which example fits it: an
-        # application acting as itself is batch.py, one naming its own users is
-        # end_user_agent.py.
-        if not consumer.acts_for_users:
-            actor = "acts as itself -> batch.py"
-        elif consumer.identity_source == "app":
-            actor = "names its own users -> end_user_agent.py"
-        else:
-            actor = "its users sign in for themselves - an API key cannot act for them"
         print(f"\n  {consumer.slug}  ({consumer.type}{'' if consumer.active else ', disabled'})")
         if consumer.name:
             print(f"    name:  {consumer.name}")
-        if consumer.type == "MCP":
-            print(f"    actor: {actor}")
         print(f"    url:   {consumer.url or '(no public host for this plane)'}")
+
+        # Both actors belong to every MCP consumer - batch.py runs as the
+        # application, end_user_agent.py names a person - so what is worth
+        # printing is not which one it is, but what each is still waiting for.
+        for upstream in consumer.upstreams or []:
+            if upstream.blocked == "administrator":
+                state = "an administrator has to connect it on the server"
+            elif upstream.blocked == "end_user":
+                state = "name the person it acts for -> end_user_agent.py"
+            else:
+                state = "ready"
+            print(f"    server {upstream.server} ({upstream.account} account): {state}")
 
 
 if __name__ == "__main__":

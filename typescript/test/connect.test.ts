@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { TrustGate, EndUserAgentFactory } from '../src/client.js'
-import { Agent } from '../src/agent.js'
+import { TrustGate } from '../src/client.js'
+import { Agent, EndUserAgent } from '../src/agent.js'
 import { MissingToolsError, UpstreamNotConnectedError } from '../src/errors.js'
 import { END_USER_HEADER } from '../src/config.js'
 import { fakeGateway } from './fake-gateway.js'
@@ -13,7 +13,7 @@ describe('connect', () => {
 		const gateway = fakeGateway()
 		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
 
-		const agent = (await tg.connect({ requires: ['notion_search'] })) as Agent
+		const agent = await tg.connect({ requires: ['notion_search'] })
 
 		expect(agent).toBeInstanceOf(Agent)
 		expect(agent.actor).toBe('application')
@@ -39,121 +39,132 @@ describe('connect', () => {
 	})
 
 	// Nobody is present to open a connect link once a batch is running, so an
-	// unconnected upstream has to stop it before it starts.
-	it('refuses an application whose own accounts are not connected', async () => {
+	// unconnected upstream has to stop it before it starts — and the refusal
+	// names who can fix it, because the caller never can.
+	it('refuses an application whose servers have no account behind them', async () => {
 		const gateway = fakeGateway({
-			connections: [
-				{ provider: 'com.notion/mcp', status: 'connected' },
-				{ provider: 'app.linear/mcp', status: 'not_connected' },
+			upstreams: [
+				{ server: 'Notion', account: 'shared', connected: true },
+				{ server: 'Linear', account: 'shared', connected: false, blocked: 'administrator' },
 			],
 		})
 		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
 
 		const error = await tg.connect().catch((e) => e)
 		expect(error).toBeInstanceOf(UpstreamNotConnectedError)
-		expect(error.providers).toEqual(['app.linear/mcp'])
-		expect(error.connectUrl).toBe('https://gw.test/acme/connect')
+		expect(error.servers).toEqual(['Linear'])
+		expect(String(error)).toMatch(/an administrator connects it/)
 	})
 
-	it('counts an expired account as not connected', async () => {
+	// A server that keeps an account per person has nothing for an application,
+	// and the remedy is a different handle rather than a different admin.
+	it('sends the caller to forEndUser when the account is per person', async () => {
 		const gateway = fakeGateway({
-			connections: [{ provider: 'com.notion/mcp', status: 'needs_reconnect' }],
+			upstreams: [{ server: 'GitHub', account: 'user', connected: false, blocked: 'end_user' }],
+		})
+		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
+
+		const error = await tg.connect().catch((e) => e)
+		expect(error).toBeInstanceOf(UpstreamNotConnectedError)
+		expect(String(error)).toMatch(/forEndUser/)
+	})
+
+	it('counts an account that has gone stale as still blocking', async () => {
+		const gateway = fakeGateway({
+			upstreams: [
+				{
+					server: 'Notion',
+					account: 'shared',
+					connected: true,
+					needs_reconnect: true,
+					blocked: 'administrator',
+				},
+			],
 		})
 		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
 
 		await expect(tg.connect()).rejects.toThrow(UpstreamNotConnectedError)
 	})
 
-	// The consumer decides which actor it is; the SDK reads that off the one
-	// question only one of the two can answer.
-	it('discovers an application that acts for its own users', async () => {
-		const gateway = fakeGateway({ actor: 'end_user' })
-		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
-
-		const handle = await tg.connect()
-
-		expect(handle).toBeInstanceOf(EndUserAgentFactory)
-		expect(handle.actor).toBe('end_user')
-	})
-
-	it('names the user on every call once one is chosen', async () => {
-		const gateway = fakeGateway({ actor: 'end_user' })
-		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
-		const handle = (await tg.connect()) as EndUserAgentFactory
-
-		const alice = await handle.forEndUser('user_123')
-		await alice.callTool('notion_search', { query: 'runbook' })
-
-		expect(alice.mcp.headers[END_USER_HEADER]).toBe('user_123')
-		const call = gateway.requests.at(-1)
-		expect(call?.headers[END_USER_HEADER]).toBe('user_123')
-	})
-
-	// An application that acts as itself has no users to speak for, and a
-	// handle that pretended otherwise would pool everyone into one account.
-	it('refuses to name a user on an application that acts as itself', async () => {
+	// A server carrying its own credential is not listed, and neither is
+	// anything at all when the gateway could not read the accounts. Either way
+	// there is nothing blocking, and a startup that refused on "no list" would
+	// refuse every application that needs no account.
+	it('starts when nothing is waiting to be connected', async () => {
 		const gateway = fakeGateway()
 		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
-		const agent = (await tg.connect()) as Agent
 
-		expect(() => agent.forEndUser('user_123')).toThrow(/no end users/)
+		await expect(tg.connect()).resolves.toBeInstanceOf(Agent)
 	})
 
-	// The endpoint refuses a request that names no user, tools/list included, so
-	// an application that names its own users has nothing connect() can ask it.
-	// Asking anyway is a 400 that no caller can act on.
-	it('connects to an app-identified consumer without asking as the application', async () => {
-		const gateway = fakeGateway({ actor: 'end_user' })
+	// The same consumer, the same key: which actor a call is comes from the
+	// call, so both handles are always available and neither is configured.
+	it('acts for a named person on the same consumer', async () => {
+		const gateway = fakeGateway()
 		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
 
-		const handle = (await tg.connect()) as EndUserAgentFactory
+		const alice = await tg.forEndUser('user_123')
+		await alice.callTool('notion_search', { query: 'runbook' })
 
-		expect(gateway.requests.filter((r) => r.url.endsWith('/mcp'))).toHaveLength(0)
-		const alice = await handle.forEndUser('user_123')
+		expect(alice).toBeInstanceOf(EndUserAgent)
+		expect(alice.actor).toBe('end_user')
+		expect(alice.mcp.headers[END_USER_HEADER]).toBe('user_123')
+		expect(gateway.requests.at(-1)?.headers[END_USER_HEADER]).toBe('user_123')
+	})
+
+	// The toolkit is the application's and identical for everyone it acts for,
+	// so naming a person from an agent already holding it costs no round trip.
+	it('names a person from the application handle without asking again', async () => {
+		const gateway = fakeGateway()
+		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
+		const agent = await tg.connect()
+		const listedBefore = gateway.requests.filter((r) => r.url.endsWith('/mcp')).length
+
+		const alice = agent.forEndUser('user_123')
+
 		expect(alice.tools.map((tool) => tool.name)).toEqual(['notion_search'])
-		expect(handle.tools.map((tool) => tool.name)).toEqual(['notion_search'])
+		expect(gateway.requests.filter((r) => r.url.endsWith('/mcp'))).toHaveLength(listedBefore)
+		expect(alice.mcp.headers[END_USER_HEADER]).toBe('user_123')
 	})
 
-	// The check connect() makes for an application acting as itself still
-	// happens — it just cannot happen until there is a user to ask as.
-	it('checks required tools on the first named user', async () => {
-		const gateway = fakeGateway({ actor: 'end_user' })
+	it('checks required tools for a named person too', async () => {
+		const gateway = fakeGateway()
 		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
-		const handle = (await tg.connect({ requires: ['linear_create_issue'] })) as EndUserAgentFactory
 
-		await expect(handle.forEndUser('user_123')).rejects.toThrow(/linear_create_issue/)
+		await expect(tg.forEndUser('user_123', { requires: ['linear_create_issue'] })).rejects.toThrow(
+			/linear_create_issue/
+		)
 	})
 
-	it('says the toolkit needs a user before one is named', async () => {
-		const gateway = fakeGateway({ actor: 'end_user' })
+	// A server that refuses a request naming nobody is a per-user server, not a
+	// misconfigured consumer: the named handle reaches it and the application
+	// handle does not, which is the same distinction stated at the other end.
+	it('reaches a per-user surface once a person is named', async () => {
+		const gateway = fakeGateway({ requireEndUser: true })
 		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
-		const handle = (await tg.connect()) as EndUserAgentFactory
 
-		expect(() => handle.tools).toThrow(/forEndUser/)
+		const alice = await tg.forEndUser('user_123')
+
+		expect(alice.tools.map((tool) => tool.name)).toEqual(['notion_search'])
 	})
 
-	// Its users arrive with their own logins, and the end-user header means
-	// nothing on such a consumer — a handle minted from an API key would run all
-	// of them as the application, on the application's own accounts.
-	it('refuses to act for users who sign in for themselves', async () => {
-		const gateway = fakeGateway({
-			whoami: {
-				gateway: 'acme',
-				consumers: [
-					{
-						slug: 'acme',
-						type: 'MCP',
-						active: true,
-						url: 'https://gw.test/acme/mcp',
-						acts_for_users: true,
-						identity_source: 'platform',
-					},
-				],
-			},
-		})
+	// A key that retires itself is a 401 nobody saw coming; a long run can ask
+	// first and refuse to start.
+	it('says when the calling key expires', async () => {
+		const gateway = fakeGateway({ keyExpiresAt: '2027-03-01T09:30:00Z' })
 		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
 
-		await expect(tg.connect()).rejects.toThrow(/signs its users in itself/)
+		const identity = await tg.identity()
+
+		expect(identity.key.name).toBe('prod')
+		expect(identity.key.expiresAt?.toISOString()).toBe('2027-03-01T09:30:00.000Z')
+	})
+
+	it('leaves the expiry undefined for a key that never expires', async () => {
+		const gateway = fakeGateway()
+		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
+
+		expect((await tg.identity()).key.expiresAt).toBeUndefined()
 	})
 })
 
@@ -161,7 +172,7 @@ describe('resolving a key', () => {
 	const bothPlanes = {
 		gateway: 'acme',
 		consumers: [
-			{ slug: 'acme', type: 'MCP', active: true, url: 'https://gw.test/acme/mcp', acts_for_users: false },
+			{ slug: 'acme', type: 'MCP', active: true, url: 'https://gw.test/acme/mcp' },
 			{ slug: 'acme-llm', type: 'LLM', active: true, url: 'https://llm.test/acme-llm/v1' },
 		],
 	}
@@ -172,7 +183,7 @@ describe('resolving a key', () => {
 		const gateway = fakeGateway({ whoami: bothPlanes })
 		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
 
-		const agent = (await tg.connect()) as Agent
+		const agent = await tg.connect()
 		const llm = await tg.llm()
 
 		expect(agent.mcp.url).toBe('https://gw.test/acme/mcp')
@@ -216,7 +227,7 @@ describe('resolving a key', () => {
 		await expect(tg.connect()).rejects.toThrow(/several MCP consumers \(support, billing\)/)
 
 		const named = new TrustGate({ ...base, mcpConsumer: 'billing', fetch: gateway.fetch })
-		expect(((await named.connect()) as Agent).mcp.url).toBe('https://gw.test/billing/mcp')
+		expect((await named.connect()).mcp.url).toBe('https://gw.test/billing/mcp')
 	})
 
 	it('shows the address it asked when /whoami is not there', async () => {

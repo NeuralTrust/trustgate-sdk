@@ -1,5 +1,14 @@
-export { TrustGate, EndUserAgentFactory, type ConnectOptions, type LLMEndpoint } from './client.js'
-export { whoAmI, selectConsumer, type KeyConsumer, type KeyIdentity } from './whoami.js'
+export { TrustGate, type ConnectOptions, type LLMEndpoint } from './client.js'
+export {
+	whoAmI,
+	selectConsumer,
+	type KeyConsumer,
+	type KeyIdentity,
+	type KeyInfo,
+	type KeyUpstream,
+	type UpstreamAccount,
+	type UpstreamBlockedBy,
+} from './whoami.js'
 export { Agent, EndUserAgent, Toolkit, type ToolkitOptions } from './agent.js'
 export { type TrustGateConfig, API_KEY_HEADER, END_USER_HEADER } from './config.js'
 export { MCPTransport } from './mcp.js'
@@ -16,10 +25,8 @@ export {
 	type ToolCall,
 } from './types.js'
 export {
-	AppActorUnavailableError,
 	AuthenticationError,
 	ConsentRequiredError,
-	EndUserActorUnavailableError,
 	InvalidRequestError,
 	MissingToolsError,
 	PlaneUnavailableError,
@@ -30,4 +37,5 @@ export {
 	TrustGateError,
 	TrustGateServerError,
 	UpstreamNotConnectedError,
+	type BlockedUpstream,
 } from './errors.js'
