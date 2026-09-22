@@ -15,7 +15,7 @@
   "files": ["dist", "src", "README.md", "LICENSE"],
   "engines": { "node": ">=18" },
   "sideEffects": false,
-  "publishConfig": { "access": "public", "provenance": true },
+  "publishConfig": { "access": "public" },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "prepublishOnly": "npm run typecheck && npm test && npm run build",
