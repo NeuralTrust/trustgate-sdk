@@ -26,7 +26,7 @@ gatewayEnv()
 const tg = new TrustGate()
 
 // Naming the person is the whole difference from openai-responses.ts, and it is
-// a per-call decision rather than something set on the consumer: the same key
+// a per-call decision rather than something set on the application: the same key
 // and the same application serve both. The name is yours to choose — the
 // gateway namespaces it, so it never collides with another application's.
 const user = await tg.forEndUser(endUser).catch(fail)

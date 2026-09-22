@@ -1,7 +1,7 @@
 /**
  * An agent that acts as itself, calling the Responses API directly.
  *
- * Nothing here knows an MCP client exists: the SDK lists the consumer's tools,
+ * Nothing here knows an MCP client exists: the SDK lists the application's tools,
  * translates them for OpenAI, and runs the calls back through the gateway.
  *
  *     npm run openai

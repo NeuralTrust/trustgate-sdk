@@ -1,8 +1,8 @@
 # Examples
 
-Four runnable programs, two per language. Each one is a shape you actually
-build, not a fragment: the application acting as itself, and the application
-acting for its own end users.
+Runnable programs in both languages. Each one is a shape you actually build,
+not a fragment: the application acting as itself, the application acting for
+its own end users, and a framework that brings its own MCP client.
 
 Nothing here is checked in with a credential. Every example reads the same two
 values — your gateway and one API key — from a `.env` you copy from the
@@ -13,12 +13,13 @@ values — your gateway and one API key — from a `.env` you copy from the
 | `python/whoami.py`, `typescript/whoami.ts` | What one key reaches, and which of these examples fits it — run this first when something is off |
 | `python/batch.py` | A nightly triage run: a model judges each row with the whole toolkit to look things up with, and everything that could stop the job is checked before the first one |
 | `python/end_user_agent.py` | An assistant that names one of its users per call, and turns "not connected" into a link to show them |
-| `python/framework_mcp.py` | The same consumer handed to a framework that brings its own MCP client — no tool list, no execution loop |
+| `python/framework_mcp.py` | The same application handed to a framework that brings its own MCP client — no tool list, no execution loop |
 | `typescript/openai-responses.ts` | Tools translated for the Responses API and run back through the gateway — no MCP client in sight |
 | `typescript/end-user-agent.ts` | The same shape as `end_user_agent.py`, against the Responses API |
-| `typescript/framework-mcp.ts` | The same consumer handed to a framework that brings its own MCP client |
+| `typescript/framework-mcp.ts` | The same application handed to a framework that brings its own MCP client |
 
-There are two ways to spend a consumer, and both are here in both languages.
+There are two ways to use an application's tools, and both are here in both
+languages.
 **Translate the tools** when you call a model provider's API directly and there
 is no MCP client anywhere — the SDK lists them, converts them to that provider's
 dialect and runs the calls (`batch.py`, `end_user_agent.py`,
@@ -30,19 +31,19 @@ framework; the first is the only one when you do not.
 
 The TypeScript examples send their model calls through the gateway too, so
 neither file holds an OpenAI key, and so does `batch.py` when the key it runs on
-reaches an LLM consumer — it falls back to `ANTHROPIC_API_KEY` when it does not.
+also reaches models — it falls back to `ANTHROPIC_API_KEY` when it does not.
 `end_user_agent.py` always calls Anthropic directly, which is the other half of
 the picture: a model call the gateway never sees.
 
 ## Where the values come from
 
-- `TRUSTGATE_URL` — your gateway's base URL, with no consumer path. The Connect
-  tab of any application shows it.
-- `TRUSTGATE_API_KEY` — the application's own key, issued from the
-  Authentication block of its General tab and shown once.
+- `TRUSTGATE_URL` — your gateway's MCP base URL, with no application path. The
+  Connect tab of any application shows it.
+- `TRUSTGATE_API_KEY` — the application's own key, issued when the application
+  is created and shown once; further keys are issued from its Auth tab.
 
-That is all the SDK needs: it asks the gateway which consumers the key reaches,
-so no slug and no second URL travel into your configuration.
+That is all the SDK needs: it asks the gateway which applications the key
+reaches, so no slug and no second URL travel into your configuration.
 
 ## Running them
 
@@ -50,7 +51,7 @@ Both projects take the SDK from this repository rather than from a registry,
 and both are wired so a change in it reaches the next run: `uv` installs the
 Python SDK editable, and the npm scripts rebuild the TypeScript one first. If an
 example ever behaves like a version you have already changed, that is what went
-wrong — `uv sync --reinstall-package trustgate` forces it.
+wrong — `uv sync --reinstall-package trustgate-sdk` forces it.
 
 ```sh
 # Python — uv installs the SDK editable from ../../python
@@ -62,11 +63,12 @@ uv run end_user_agent.py user_123 "what changed in the runbook this week?"
 uv run framework_mcp.py
 ```
 
-An application that acts as itself is `batch.py`; one that names its own users
-is `end_user_agent.py`. The consumer decides which, not the caller, and
-`whoami.py` prints the answer — so "this application acts for its own end
-users" from `batch.py` means the key is that other kind, whatever the console
-tab you were last looking at.
+An application acting as itself is `batch.py`; one naming its own users is
+`end_user_agent.py`. Both run on the same kind of key: who a call runs as comes
+from the call, not from a setting. If `batch.py` stops because a server keeps an
+account per user, its message says so and gives the line that names the person
+instead — which is the shape `end_user_agent.py` shows. `whoami.py` prints, per
+server, whether an account is connected and who connects it.
 
 ```sh
 # TypeScript — npm links the SDK from ../../typescript and rebuilds it per run
@@ -86,5 +88,5 @@ because it is not published yet. The one line to change when it is:
 
 The tool names in each example (`notion_search`, `linear_create_issue`) are
 placeholders too — replace them with tools your application carries, as its
-Routing tab lists them. An example that asks for a tool the application does
+General tab lists them. An example that asks for a tool the application does
 not have refuses at startup and names it, which is the behaviour being shown.

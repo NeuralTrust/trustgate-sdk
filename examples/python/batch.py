@@ -132,7 +132,7 @@ def model_client(tg: TrustGate):
     """The model, through the gateway when this key reaches one.
 
     Then the whole agent stands on one secret and the model calls are governed
-    like the tool calls. A key that reaches no LLM consumer falls back to
+    like the tool calls. A key that reaches no models falls back to
     Anthropic directly, which is a key of your own and a call nobody sees.
     """
     import anthropic
@@ -140,11 +140,11 @@ def model_client(tg: TrustGate):
     try:
         llm = tg.llm()
     except PlaneUnavailableError:
-        log.info("no LLM consumer behind this key; calling Anthropic directly")
+        log.info("this key reaches no models; calling Anthropic directly")
         return anthropic.Anthropic(
             api_key=require(
                 "ANTHROPIC_API_KEY",
-                "This key reaches no LLM consumer, so the model call needs one of yours.",
+                "This key reaches no models, so the model call needs a key of yours.",
             )
         )
     log.info("models through %s", llm.consumer)

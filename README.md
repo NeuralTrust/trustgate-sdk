@@ -2,11 +2,11 @@
 
 Point an agent at a TrustGate gateway, in TypeScript or Python.
 
-An admin creates an MCP consumer for the agent and decides which tools it may
-reach. This SDK is the other half of that: it hands those tools to whatever is
-driving the model, and it answers the three questions MCP itself does not
-carry — **which actor** a call speaks as, **which credential** it travels with,
-and **what to do when an upstream account is not connected**.
+An admin creates an application for the agent in the NeuralTrust console and
+decides which tools it may reach. This SDK is the other half of that: it hands
+those tools to whatever is driving the model, and it answers the three questions
+MCP itself does not carry — **who a call runs as**, **which credential** it
+travels with, and **what to do when an upstream account is not connected**.
 
 ```bash
 npm install @neuraltrust/trustgate     # TypeScript, Node 18+
@@ -66,11 +66,11 @@ path.
 const tg = new TrustGate({ baseUrl: 'https://gw.acme.ai', apiKey: 'ag_…' })
 ```
 
-That is the whole configuration. The consumers behind a key were created by an
-admin, in the console, and their slugs never travelled with the key — so the
-gateway is asked: `GET /whoami` answers with the consumers this key reaches and
-the address of each. Name a slug only when a key reaches two consumers of the
-same plane, which the SDK will not guess at.
+That is the whole configuration. The applications behind a key were created
+in the console, and their slugs never travelled with the key — so the SDK asks
+the gateway which applications the key reaches and where each is served. Name a
+slug only when a key reaches two applications on the same plane, which the SDK
+will not guess at.
 
 ## The LLM plane
 
@@ -89,21 +89,22 @@ both governed.
 
 ## What `connect()` proves before anything runs
 
-1. **That the tools you need are there.** The toolkit belongs to an admin and
+1. **That the servers have an account to call with.** There is no runtime
+   remedy for a missing account in a batch: nobody is there to open a connect
+   link once it is running. The refusal names each server and who fixes it — an
+   administrator for a shared account, or your code, with the line to write,
+   for a server that keeps an account per user.
+2. **That the tools you need are there.** The toolkit belongs to an admin and
    can be narrowed without warning. `requires` turns that into a refusal at
    startup instead of a failure mid-conversation.
-2. **That the servers have an account to call with.** There is no runtime
-   remedy for a missing account in a batch: nobody is there to open a connect
-   link once it is running. The refusal names the servers and who can connect
-   them, which for this handle is never the caller.
 
 ```python
 try:
     agent = tg.connect(requires=["search", "create_issue"])
 except MissingToolsError as e:
-    sys.exit(f"the consumer is missing {e.missing}; ask your admin")
+    sys.exit(f"the application is missing {e.missing}; ask your admin")
 except UpstreamNotConnectedError as e:
-    sys.exit(str(e))   # names the servers and who has to connect them
+    sys.exit(str(e))   # names each server and who fixes it
 ```
 
 `tg.identity()` answers the third thing a long run wants to know before it
@@ -139,10 +140,11 @@ person's own token is already that person.
 
 ## Running something
 
-[`examples/`](examples) holds four programs that run as they are, two per
-language — a batch job and an end-user assistant. Each project builds the SDK
-from this repository and takes its gateway and key from a `.env` you copy from
-the `.env.example` beside it:
+[`examples/`](examples) holds programs that run as they are: an end-user
+assistant and a framework using its own MCP client in both languages, a batch
+job in Python, a direct OpenAI Responses loop in TypeScript, and `whoami` in
+both. Each project builds the SDK from this repository and takes its gateway and
+key from a `.env` you copy from the `.env.example` beside it:
 
 ```sh
 cd examples/python && cp .env.example .env && uv run batch.py
@@ -152,7 +154,7 @@ cd examples/typescript && cp .env.example .env && npm install && npm run openai
 ## Reading the docs for your language
 
 - [`typescript/`](typescript) — `@neuraltrust/trustgate`
-- [`python/`](python) — `trustgate`
+- [`python/`](python) — `trustgate-sdk`
 
 Both track the same gateway contract and the same behaviour; the tests in each
 are written against the same cases.
@@ -161,8 +163,11 @@ are written against the same cases.
 
 A TrustGate gateway that serves `GET /whoami` and the application-actor form
 of `GET /{slug}/connections`. The first is how the SDK resolves a key into its
-consumers; the second is the batch preflight. It says so plainly if the gateway
-predates either.
+applications; the second is the batch preflight. It says so plainly if the
+gateway predates either.
+
+The SDK is pre-1.0: minor versions may still change the API, and the changes
+are named in each release.
 
 ## License
 

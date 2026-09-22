@@ -26,7 +26,9 @@ def main() -> None:
     expiry = identity.key.expires_at.isoformat() if identity.key.expires_at else "never"
     print(f"key:     {identity.key.name or '(unnamed)'} - expires {expiry}")
     if not identity.consumers:
-        sys.exit("this key reaches no consumer. It may be disabled, or belong to another gateway.")
+        sys.exit(
+            "this key reaches no application. It may be disabled, or belong to another gateway."
+        )
 
     for consumer in identity.consumers:
         print(f"\n  {consumer.slug}  ({consumer.type}{'' if consumer.active else ', disabled'})")
@@ -34,7 +36,7 @@ def main() -> None:
             print(f"    name:  {consumer.name}")
         print(f"    url:   {consumer.url or '(no public host for this plane)'}")
 
-        # Both actors belong to every MCP consumer - batch.py runs as the
+        # Both actors belong to every MCP application - batch.py runs as the
         # application, end_user_agent.py names a person - so what is worth
         # printing is not which one it is, but what each is still waiting for.
         for upstream in consumer.upstreams or []:
