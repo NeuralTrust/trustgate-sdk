@@ -1,4 +1,4 @@
-"""The same consumer, handed to a framework that brings its own MCP client.
+"""The same application, handed to a framework that brings its own MCP client.
 
 There is no tool list and no execution loop here: the framework lists and calls
 for itself. All the SDK contributes is a checked URL and its headers - and the
@@ -18,6 +18,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset, StreamableHttpTransport
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
+
 from trustgate import (
     MissingToolsError,
     PlaneUnavailableError,
@@ -39,7 +40,7 @@ def model(tg: TrustGate) -> OpenAIChatModel:
     """The model, through the gateway when this key reaches one.
 
     Then the whole agent stands on one secret and the model calls are governed
-    like the tool calls. A key that reaches no LLM consumer falls back to OpenAI
+    like the tool calls. A key that reaches no models falls back to OpenAI
     directly, which is a key of your own and a call nobody sees.
     """
     try:
@@ -49,7 +50,7 @@ def model(tg: TrustGate) -> OpenAIChatModel:
         provider = OpenAIProvider(
             api_key=require(
                 "OPENAI_API_KEY",
-                "This key reaches no LLM consumer, so the model call needs one of yours.",
+                "This key reaches no models, so the model call needs a key of yours.",
             )
         )
     return OpenAIChatModel(MODEL, provider=provider)

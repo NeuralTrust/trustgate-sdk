@@ -43,7 +43,9 @@ def resolve_config(
     return Config(
         base_url=resolved_url,
         api_key=resolved_key,
-        mcp_consumer=(mcp_consumer or os.environ.get("TRUSTGATE_MCP_CONSUMER") or "").strip() or None,
-        llm_consumer=(llm_consumer or os.environ.get("TRUSTGATE_LLM_CONSUMER") or "").strip() or None,
+        mcp_consumer=(mcp_consumer or os.environ.get("TRUSTGATE_MCP_CONSUMER") or "").strip()
+        or None,
+        llm_consumer=(llm_consumer or os.environ.get("TRUSTGATE_LLM_CONSUMER") or "").strip()
+        or None,
         timeout=timeout,
     )

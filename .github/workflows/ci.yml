@@ -1,0 +1,158 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  typescript:
+    name: TypeScript · Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 18 is the floor package.json promises; the rest are the lines people run.
+        node: [18, 20, 22, 24]
+    defaults:
+      run:
+        working-directory: typescript
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: typescript/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  python:
+    name: Python · ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13"]
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+          cache-dependency-glob: python/uv.lock
+      - run: uv sync --locked --extra dev
+      - run: uv run --locked pytest
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: python/uv.lock
+      - name: ruff check
+        run: uvx ruff@0.15 check --config python/pyproject.toml python/src python/tests examples/python
+      - name: ruff format
+        run: uvx ruff@0.15 format --check --config python/pyproject.toml python/src python/tests examples/python
+      - name: Versions agree
+        # Two packages released together under one tag, and the Python one
+        # states its version twice: all three have to match or a release
+        # publishes one version under another's name.
+        run: |
+          npm_version=$(jq -r .version typescript/package.json)
+          py_version=$(sed -n 's/^version = "\(.*\)"$/\1/p' python/pyproject.toml)
+          py_runtime=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' python/src/trustgate/__init__.py)
+          echo "npm=$npm_version pyproject=$py_version __version__=$py_runtime"
+          [ "$npm_version" = "$py_version" ] && [ "$py_version" = "$py_runtime" ]
+      - name: Licence copies match the root
+        run: |
+          cmp LICENSE typescript/LICENSE
+          cmp LICENSE python/LICENSE
+
+  package:
+    name: Packages install and import
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: typescript/package-lock.json
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.10"
+      # What a user installs is the packed artifact, not the working tree: a
+      # file missing from "files" or a broken export only shows up here.
+      - name: npm tarball
+        run: |
+          cd typescript
+          npm ci
+          npm run build
+          tarball="$PWD/$(npm pack --silent)"
+          tar tzf "$tarball" | grep -qx package/LICENSE
+          consumer=$(mktemp -d)
+          cd "$consumer"
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund "$tarball"
+          node --input-type=module -e "import { TrustGate, ToolFormat } from '@neuraltrust/trustgate'; if (typeof TrustGate !== 'function' || !ToolFormat.OpenAIResponses) process.exit(1)"
+      - name: Python wheel and sdist
+        run: |
+          cd python
+          uv build
+          uvx twine check --strict dist/*
+          uv venv /tmp/wheel-check
+          uv pip install --python /tmp/wheel-check/bin/python dist/*.whl
+          /tmp/wheel-check/bin/python -c "import trustgate; from trustgate import TrustGate, ToolFormat"
+
+  examples:
+    name: Examples typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          # The examples run TypeScript directly with --experimental-strip-types.
+          node-version: 22
+      - name: Build the SDK the examples import
+        working-directory: typescript
+        run: |
+          npm ci
+          npm run build
+      - name: Typecheck the examples
+        working-directory: examples/typescript
+        # Their lockfile is not committed (they track the SDK from source), so
+        # install resolves fresh: an upstream release that breaks an example
+        # shows up here rather than in a user's terminal.
+        run: |
+          npm install --no-audit --no-fund
+          npx tsc --noEmit -p .
+      - name: Python examples compile
+        run: python3 -m compileall -q examples/python

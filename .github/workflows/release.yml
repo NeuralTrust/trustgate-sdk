@@ -1,0 +1,155 @@
+name: Release
+
+# One tag publishes both packages: v0.2.0 releases @neuraltrust/trustgate 0.2.0
+# to npm and trustgate-sdk 0.2.0 to PyPI. Neither registry holds a token for this
+# repository; both trust this workflow through OIDC (trusted publishing), so
+# there is no secret to leak and every artifact carries provenance back to the
+# commit and the run that built it.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Tag matches both packages
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - id: version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          npm_version=$(jq -r .version typescript/package.json)
+          py_version=$(sed -n 's/^version = "\(.*\)"$/\1/p' python/pyproject.toml)
+          py_runtime=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' python/src/trustgate/__init__.py)
+          echo "tag=$tag npm=$npm_version pyproject=$py_version __version__=$py_runtime"
+          if [ "$tag" != "$npm_version" ] || [ "$tag" != "$py_version" ] || [ "$tag" != "$py_runtime" ]; then
+            echo "::error::tag v$tag does not match the package versions; bump them before tagging"
+            exit 1
+          fi
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build and test
+    needs: verify
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ needs.verify.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: typescript/package-lock.json
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - name: TypeScript
+        working-directory: typescript
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+          npm run build
+          mkdir -p ../dist/npm
+          npm pack --pack-destination ../dist/npm
+      - name: Python
+        working-directory: python
+        run: |
+          uv sync --locked --extra dev
+          uv run --locked pytest
+          uv build --out-dir ../dist/pypi
+          uvx twine check --strict ../dist/pypi/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  pypi:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/trustgate-sdk/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/pypi/
+          # A re-run after a partial failure publishes what is missing.
+          skip-existing: true
+
+  npm:
+    name: Publish to npm
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/@neuraltrust/trustgate
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      # Trusted publishing needs npm 11.5.1 or later; Node 22 ships 10.x.
+      - run: npm install -g npm@latest
+      - name: Publish, unless this version is already on npm
+        # Already there means a re-run after a partial failure, or the first
+        # version published by hand to create the package (see CONTRIBUTING).
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          if npm view "@neuraltrust/trustgate@$VERSION" version >/dev/null 2>&1; then
+            echo "::notice::@neuraltrust/trustgate@$VERSION is already published"
+            exit 0
+          fi
+          npm publish dist/npm/*.tgz --access public --provenance
+
+  github-release:
+    name: GitHub release
+    needs: [verify, pypi, npm]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Create the release with both artifacts attached
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "v$VERSION" \
+            --generate-notes \
+            dist/npm/*.tgz dist/pypi/*

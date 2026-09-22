@@ -94,7 +94,7 @@ def main() -> None:
     tg = TrustGate()
     try:
         # Naming the person is the whole difference from batch.py, and it is a
-        # per-call decision rather than something set on the consumer: the same
+        # per-call decision rather than something set on the application: the same
         # key and the same application serve both. The name is yours to choose -
         # the gateway namespaces it, so it never collides with another
         # application's.

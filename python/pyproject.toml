@@ -1,23 +1,39 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "trustgate"
+name = "trustgate-sdk"
 version = "0.1.0"
 description = "TrustGate SDK - governed tools and models for agents, over the MCP and LLM planes of a TrustGate gateway."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [{ name = "NeuralTrust" }]
-keywords = ["mcp", "agents", "llm", "gateway", "trustgate"]
+keywords = ["mcp", "model-context-protocol", "agents", "llm", "gateway", "trustgate", "neuraltrust"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+    "Typing :: Typed",
+]
 dependencies = []
 
 [project.urls]
 Homepage = "https://github.com/NeuralTrust/trustgate-sdk"
+Documentation = "https://docs.neuraltrust.ai/trustgate/mcp/connect"
+Issues = "https://github.com/NeuralTrust/trustgate-sdk/issues"
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "ruff>=0.15"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/trustgate"]
@@ -25,3 +41,19 @@ packages = ["src/trustgate"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# pyflakes and pycodestyle errors, import order, and the upgrades a 3.10 floor
+# allows. Nothing opinionated beyond that: the checks are here to catch bugs.
+select = ["E", "F", "W", "I", "UP", "B"]
+# The formatter owns line length; a long string or URL is not a bug.
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+# The examples share one local helper module; keep it apart from the SDK import.
+known-first-party = ["trustgate"]
+known-local-folder = ["_config"]

@@ -9,8 +9,9 @@ client and never sees any of this.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from .schema import Schema, inline_refs, strip_injected_nulls, to_strict
 from .types import GatewayTool, ToolCall, ToolFormat

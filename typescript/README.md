@@ -1,6 +1,7 @@
 # @neuraltrust/trustgate
 
-The TrustGate SDK for TypeScript. Node 18+, ESM, no runtime dependencies.
+The TrustGate SDK for TypeScript. Node 18+, no runtime dependencies. ESM only:
+import it, or `require()` it on Node 20.19+ or 22.12+.
 
 ```bash
 npm install @neuraltrust/trustgate
@@ -14,8 +15,8 @@ import { TrustGate, ToolFormat } from '@neuraltrust/trustgate'
 const tg = new TrustGate()   // TRUSTGATE_URL + TRUSTGATE_API_KEY
 ```
 
-Two values, or none if they are in the environment. The consumers behind the
-key are asked for: `tg.identity()` reads `GET /whoami` once and remembers it.
+Two values, or none if they are in the environment. The applications behind
+the key are asked for: `tg.identity()` asks the gateway once and remembers it.
 
 ```ts
 const { gateway, key, consumers } = await tg.identity()
@@ -31,7 +32,7 @@ is the refusal you would otherwise meet on the first tool call — both answered
 before anything starts.
 
 `mcpConsumer` and `llmConsumer` (or `TRUSTGATE_MCP_CONSUMER` /
-`TRUSTGATE_LLM_CONSUMER`) are only needed when a key reaches two consumers of
+`TRUSTGATE_LLM_CONSUMER`) are only needed when a key reaches two applications on
 the same plane — the SDK names them and refuses rather than guessing.
 
 ## An agent that acts as the application
@@ -40,7 +41,7 @@ the same plane — the SDK names them and refuses rather than guessing.
 const agent = await tg.connect({ requires: ['search'] })
 
 agent.mcp                                   // { url, headers } for a framework
-await tg.llm()                              // { baseUrl, apiKey } for OpenAI/Anthropic
+await tg.llm()                              // baseUrl for OpenAI, anthropicBaseUrl for Anthropic
 agent.toolkit(ToolFormat.OpenAIResponses)   // { tools, execute, warnings }
 await agent.callTool('search', { query: 'runbook' })
 await agent.refresh()                       // re-read the toolkit
@@ -65,8 +66,8 @@ await alice.connectLink('com.notion/mcp')
 alice.toolkit(ToolFormat.AnthropicMessages)
 ```
 
-Both handles work on the same consumer and the same key: which actor a call is
-comes from the call, not from anything configured on the consumer. Each user
+Both handles work on the same application and the same key: who a call runs as
+comes from the call, not from anything configured on the application. Each user
 needs their own handle because the MCP endpoint fixes its headers when a client
 connects, and the user travels in one.
 
@@ -111,19 +112,21 @@ strict asked for are stripped unless the tool's own schema accepts them.
 
 | Class | When |
 |---|---|
-| `MissingToolsError` | `requires` names a tool the consumer does not serve |
+| `MissingToolsError` | `requires` names a tool the application does not serve |
 | `UpstreamNotConnectedError` | a server the application calls has no account behind it; `servers` names them and the message says who connects it |
 | `ConsentRequiredError` | an end user has not connected; carries `connectUrl` |
 | `PolicyBlockedError` | a gateway policy refused the call |
 | `ToolNotFoundError` | the tool left the toolkit under a running agent |
-| `PlaneUnavailableError` | the key reaches no consumer of that plane |
+| `PlaneUnavailableError` | the key reaches no application on that plane |
 | `AuthenticationError`, `RateLimitedError`, `ServiceUnavailableError`, `TrustGateServerError` | as named |
 
 ## Development
 
 ```bash
-npm install
+npm ci
 npm run typecheck
 npm test
 npm run build
 ```
+
+[CONTRIBUTING.md](../CONTRIBUTING.md) has every check CI runs.

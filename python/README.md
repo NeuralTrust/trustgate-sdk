@@ -1,9 +1,9 @@
-# trustgate
+# trustgate-sdk
 
 The TrustGate SDK for Python. 3.10+, standard library only.
 
 ```bash
-pip install trustgate
+pip install trustgate-sdk
 ```
 
 ## Setup
@@ -14,8 +14,8 @@ from trustgate import TrustGate, ToolFormat
 tg = TrustGate()   # TRUSTGATE_URL + TRUSTGATE_API_KEY
 ```
 
-Two values, or none if they are in the environment. The consumers behind the
-key are asked for: `tg.identity()` reads `GET /whoami` once and remembers it.
+Two values, or none if they are in the environment. The applications behind
+the key are asked for: `tg.identity()` asks the gateway once and remembers it.
 
 ```python
 identity = tg.identity()
@@ -30,7 +30,7 @@ is the refusal you would otherwise meet on the first tool call — both answered
 before anything starts.
 
 `mcp_consumer` and `llm_consumer` (or `TRUSTGATE_MCP_CONSUMER` /
-`TRUSTGATE_LLM_CONSUMER`) are only needed when a key reaches two consumers of
+`TRUSTGATE_LLM_CONSUMER`) are only needed when a key reaches two applications on
 the same plane — the SDK names them and refuses rather than guessing.
 
 ## An agent that acts as the application
@@ -39,7 +39,7 @@ the same plane — the SDK names them and refuses rather than guessing.
 agent = tg.connect(requires=["search"])
 
 agent.mcp                                        # url + headers for a framework
-tg.llm()                                         # base_url + api_key for OpenAI/Anthropic
+tg.llm()                                         # base_url for OpenAI, anthropic_base_url for Anthropic
 toolkit = agent.toolkit(ToolFormat.OPENAI_RESPONSES)
 agent.call_tool("search", {"query": "runbook"})
 agent.refresh()                                  # re-read the toolkit
@@ -52,7 +52,7 @@ A batch that must not stop halfway:
 try:
     agent = tg.connect(requires=["search"])
 except UpstreamNotConnectedError as error:
-    sys.exit(str(error))   # names the servers and who has to connect them
+    sys.exit(str(error))   # names each server and who fixes it
 
 for row in rows:
     agent.call_tool("search", {"query": row.query})
@@ -76,8 +76,8 @@ alice.connect_link("com.notion/mcp")
 alice.toolkit(ToolFormat.ANTHROPIC_MESSAGES)
 ```
 
-Both handles work on the same consumer and the same key: which actor a call is
-comes from the call, not from anything configured on the consumer. The name is
+Both handles work on the same application and the same key: who a call runs as
+comes from the call, not from anything configured on the application. The name is
 yours to choose and the gateway namespaces it, so two applications naming
 `user_123` never reach the same account.
 
@@ -114,17 +114,19 @@ tests use a fake one. It is also where a retry policy or a proxy belongs.
 
 | Class | When |
 |---|---|
-| `MissingToolsError` | `requires` names a tool the consumer does not serve |
+| `MissingToolsError` | `requires` names a tool the application does not serve |
 | `UpstreamNotConnectedError` | a server the application calls has no account behind it; `servers` names them and the message says who connects it |
 | `ConsentRequiredError` | an end user has not connected; carries `connect_url` |
 | `PolicyBlockedError` | a gateway policy refused the call |
 | `ToolNotFoundError` | the tool left the toolkit under a running agent |
-| `PlaneUnavailableError` | the key reaches no consumer of that plane |
+| `PlaneUnavailableError` | the key reaches no application on that plane |
 | `AuthenticationError`, `RateLimitedError`, `ServiceUnavailableError`, `TrustGateServerError` | as named |
 
 ## Development
 
 ```bash
-pip install -e ".[dev]"
-pytest
+uv sync --extra dev
+uv run pytest
 ```
+
+[CONTRIBUTING.md](../CONTRIBUTING.md) has every check CI runs.
