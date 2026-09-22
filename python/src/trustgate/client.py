@@ -112,14 +112,17 @@ class TrustGate:
         consumer = select_consumer(
             self.identity(), "MCP", self._config.mcp_consumer, "mcp_consumer"
         )
-        transport = MCPTransport(self._config, self._transport, consumer.url)
-        tools = transport.list_tools()
-        _check_requires(tools, list(requires or []))
-
+        # Accounts before tools: a server with no account for the application
+        # can fail the listing itself, which would surface as a bare gateway
+        # error before this check - the one that says who fixes it - ever ran.
         connections = list_connections(self._config, self._transport, consumer.slug)
         blocked = _blocked_upstreams(consumer.upstreams, connections)
         if blocked:
             raise UpstreamNotConnectedError(blocked)
+
+        transport = MCPTransport(self._config, self._transport, consumer.url)
+        tools = transport.list_tools()
+        _check_requires(tools, list(requires or []))
 
         return Agent(
             self._config, self._transport, consumer.slug, transport, tools, connections

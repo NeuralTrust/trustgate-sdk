@@ -169,8 +169,8 @@ def main() -> None:
         # from a dead end into the list to put in REQUIRED_TOOLS.
         sys.exit(f"this application cannot run: {error}")
     except UpstreamNotConnectedError as error:
-        # The message names the servers and who has to connect them, which for
-        # this handle is never the caller.
+        # The message names each server and who fixes it: an administrator for a
+        # shared account, or this code, with the call to make, for a per-user one.
         sys.exit(str(error))
     except TrustGateError as error:
         # A wrong URL or a key the gateway does not know lands here. Said as a

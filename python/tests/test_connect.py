@@ -67,7 +67,7 @@ def test_refuses_an_application_whose_servers_have_no_account_behind_them() -> N
         client(gateway).connect()
 
     assert caught.value.servers == ["Linear"]
-    assert "an administrator connects it" in str(caught.value)
+    assert "An administrator connects it" in str(caught.value)
 
 
 # A server that keeps an account per person has nothing for an application, and
@@ -79,8 +79,30 @@ def test_sends_the_caller_to_for_end_user_when_the_account_is_per_person() -> No
         ]
     )
 
-    with pytest.raises(UpstreamNotConnectedError, match="for_end_user"):
+    with pytest.raises(UpstreamNotConnectedError) as caught:
         client(gateway).connect()
+
+    # The fix is one call the developer has not met yet, so it is in the message.
+    assert 'agent = tg.for_end_user("user_123")' in str(caught.value)
+
+
+# The gateway can refuse the whole listing over a server the application has no
+# account on. That refusal says nothing about who fixes it, so the account check
+# has to come first - otherwise the typed error never gets its turn.
+def test_names_the_account_before_the_listing_can_fail_over_it() -> None:
+    gateway = FakeGateway(
+        upstreams=[{"server": "Linear", "account": "user", "connected": False, "blocked": "end_user"}],
+        list_error={
+            "code": -32003,
+            "message": 'mcp: "Linear" uses a per-user account and this request runs as the application itself',
+        },
+    )
+
+    with pytest.raises(UpstreamNotConnectedError) as caught:
+        client(gateway).connect()
+
+    assert caught.value.servers == ["Linear"]
+    assert not any(r.body and r.body.get("method") == "tools/list" for r in gateway.requests)
 
 
 def test_counts_an_account_that_has_gone_stale_as_still_blocking() -> None:

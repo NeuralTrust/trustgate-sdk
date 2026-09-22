@@ -91,27 +91,44 @@ class UpstreamNotConnectedError(TrustGateError):
 
 
 def _describe_blocked(upstreams: list["KeyUpstream"]) -> str:
+    """Says who fixes each server, with the line of code when it is the caller.
+
+    Read on a terminal at startup, so it is written to be acted on there: the
+    per-user case is the one a developer hits first, and the fix is one call
+    they have not seen yet, so the call is in the message.
+    """
     by_admin = [u for u in upstreams if u.blocked == "administrator"]
     by_user = [u for u in upstreams if u.blocked == "end_user"]
     parts: list[str] = []
-    if by_admin:
-        parts.append(
-            f"{_names(by_admin)} use one account for every caller and it is not "
-            "connected; an administrator connects it on the server in the console"
-        )
     if by_user:
         parts.append(
-            f"{_names(by_user)} keep an account per person, and this call runs as the "
-            "application itself; name the person it acts for with for_end_user(...), "
-            "or ask an administrator to switch the server to a shared account"
+            f"{_names(by_user)} {_verb(by_user, 'keeps', 'keep')} one account per user, and "
+            "connect() runs as the application, which has none there.\n"
+            "\n"
+            "Run as the person the work is for:\n"
+            "\n"
+            '    agent = tg.for_end_user("user_123")\n'
+            "\n"
+            f"or have an administrator set {_names(by_user)} to a shared account in the "
+            "console (Registry, on the server's instance), and connect() works as it is."
+        )
+    if by_admin:
+        parts.append(
+            f"{_names(by_admin)} {_verb(by_admin, 'uses', 'use')} one shared account for every "
+            "caller, and nobody has connected it yet. An administrator connects it in the "
+            "console: Registry, on the server's instance, Connect."
         )
     if not parts:
-        return f"{_names(upstreams)} are not connected."
-    return ". ".join(parts) + "."
+        return f"{_names(upstreams)} {_verb(upstreams, 'is', 'are')} not connected."
+    return "\n\n".join(parts)
 
 
 def _names(upstreams: list["KeyUpstream"]) -> str:
-    return ", ".join(upstream.server for upstream in upstreams)
+    return ", ".join(f'"{upstream.server}"' for upstream in upstreams)
+
+
+def _verb(upstreams: list["KeyUpstream"], one: str, many: str) -> str:
+    return one if len(upstreams) == 1 else many
 
 
 class ConsentRequiredError(TrustGateError):

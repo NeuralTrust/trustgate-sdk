@@ -43,6 +43,9 @@ class FakeGateway:
     )
     call_results: dict[str, Any] = field(default_factory=dict)
     call_errors: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: Fails tools/list with this JSON-RPC error, as a server with no account
+    #: for the caller can make the whole listing fail.
+    list_error: dict[str, Any] | None = None
     #: Frames the tools/call response as an event stream, as the gateway does
     #: when it has a surface change to announce on the same response.
     frame_as_event_stream: bool = False
@@ -112,6 +115,8 @@ class FakeGateway:
                 )
             rpc = decoded or {}
             if rpc.get("method") == "tools/list":
+                if self.list_error is not None:
+                    return self._rpc_error(rpc["id"], self.list_error)
                 return self._rpc(rpc["id"], {"tools": [_tool_json(t) for t in self.tools]}, False)
             if rpc.get("method") == "tools/call":
                 name = rpc["params"]["name"]

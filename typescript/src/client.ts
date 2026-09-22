@@ -111,17 +111,20 @@ export class TrustGate {
 		const identity = await this.identity(options.signal)
 		const consumer = selectConsumer(identity, 'MCP', this.config.mcpConsumer, 'mcpConsumer')
 
+		// Accounts before tools: a server with no account for the application can
+		// fail the listing itself, which would surface as a bare gateway error
+		// before this check — the one that says who fixes it — ever ran.
+		const connections = await listConnections(this.config, consumer.slug, undefined, options.signal)
+		const blocked = blockedUpstreams(consumer.upstreams, connections)
+		if (blocked.length > 0) {
+			throw new UpstreamNotConnectedError(blocked)
+		}
+
 		const transport = new MCPTransport(this.config, consumer.url)
 		const tools = await transport.listTools(options.signal)
 		const missing = missingTools(tools, options.requires ?? [])
 		if (missing.length > 0) {
 			throw new MissingToolsError(missing, tools.map((tool) => tool.name))
-		}
-
-		const connections = await listConnections(this.config, consumer.slug, undefined, options.signal)
-		const blocked = blockedUpstreams(consumer.upstreams, connections)
-		if (blocked.length > 0) {
-			throw new UpstreamNotConnectedError(blocked)
 		}
 		return new Agent(this.config, consumer.slug, transport, tools, missing, connections)
 	}
