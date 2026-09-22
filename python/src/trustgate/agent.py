@@ -12,8 +12,8 @@ from .schema import Schema
 from .transport import Transport
 from .types import (
     Actor,
-    ConnectLink,
     Connection,
+    ConnectLink,
     Endpoint,
     GatewayTool,
     ToolCall,
@@ -137,7 +137,7 @@ class Agent(_ToolSurface):
         """What the application still owes before it can call every server."""
         return list_connections(self._config, self._http, self.slug)
 
-    def for_end_user(self, end_user: str) -> "EndUserAgent":
+    def for_end_user(self, end_user: str) -> EndUserAgent:
         """The same application, acting for one named person.
 
         No round trip and no second surface to read: the toolkit an admin bound

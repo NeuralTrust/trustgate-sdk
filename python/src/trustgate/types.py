@@ -111,6 +111,6 @@ def resolve_tool_name(name: str, tools: list[GatewayTool]) -> str:
     if len(matches) > 1:
         raise TrustGateError(
             f'"{name}" is served by more than one of this application\'s servers '
-            f'({", ".join(sorted(matches))}). Name the one you mean.'
+            f"({', '.join(sorted(matches))}). Name the one you mean."
         )
     return name

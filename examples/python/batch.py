@@ -91,9 +91,7 @@ def verdict(agent, client, issue: dict) -> str:
         )
         outputs = toolkit.execute(message)
         if not outputs:
-            return " ".join(
-                block.text for block in message.content if block.type == "text"
-            ).strip()
+            return " ".join(block.text for block in message.content if block.type == "text").strip()
         messages.append({"role": "assistant", "content": message.content})
         messages.extend(outputs)
 
@@ -110,7 +108,7 @@ def split_verdict(answer: str) -> tuple[str, str]:
     flat = " ".join(answer.replace("*", " ").replace("#", " ").split())
     for name in VERDICTS:
         if flat.upper().startswith(name):
-            return name, flat[len(name):].lstrip(" -–—:,.").strip()
+            return name, flat[len(name) :].lstrip(" -–—:,.").strip()
     return "?", flat
 
 

@@ -91,7 +91,9 @@ def test_sends_the_caller_to_for_end_user_when_the_account_is_per_person() -> No
 # has to come first - otherwise the typed error never gets its turn.
 def test_names_the_account_before_the_listing_can_fail_over_it() -> None:
     gateway = FakeGateway(
-        upstreams=[{"server": "Linear", "account": "user", "connected": False, "blocked": "end_user"}],
+        upstreams=[
+            {"server": "Linear", "account": "user", "connected": False, "blocked": "end_user"}
+        ],
         list_error={
             "code": -32003,
             "message": 'mcp: "Linear" uses a per-user account and this request runs as the application itself',
@@ -272,8 +274,18 @@ def test_asks_which_one_when_a_key_reaches_two_of_a_plane() -> None:
         whoami={
             "gateway": "acme",
             "consumers": [
-                {"slug": "support", "type": "MCP", "active": True, "url": "https://gw.test/support/mcp"},
-                {"slug": "billing", "type": "MCP", "active": True, "url": "https://gw.test/billing/mcp"},
+                {
+                    "slug": "support",
+                    "type": "MCP",
+                    "active": True,
+                    "url": "https://gw.test/support/mcp",
+                },
+                {
+                    "slug": "billing",
+                    "type": "MCP",
+                    "active": True,
+                    "url": "https://gw.test/billing/mcp",
+                },
             ],
         }
     )

@@ -38,7 +38,11 @@ class FakeGateway:
     )
     tools: list[GatewayTool] = field(
         default_factory=lambda: [
-            GatewayTool(name="notion_search", description="search", input_schema={"type": "object", "properties": {}})
+            GatewayTool(
+                name="notion_search",
+                description="search",
+                input_schema={"type": "object", "properties": {}},
+            )
         ]
     )
     call_results: dict[str, Any] = field(default_factory=dict)
@@ -145,7 +149,9 @@ def _tool_json(tool: GatewayTool) -> dict[str, Any]:
 
 
 def _json(status: int, body: Any) -> Response:
-    return Response(status=status, headers={"Content-Type": "application/json"}, text=json.dumps(body))
+    return Response(
+        status=status, headers={"Content-Type": "application/json"}, text=json.dumps(body)
+    )
 
 
 def _envelope(payload: Any, framed: bool) -> Response:

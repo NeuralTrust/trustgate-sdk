@@ -10,7 +10,7 @@ from urllib.parse import quote
 from .config import API_KEY_HEADER, END_USER_HEADER, Config
 from .errors import InvalidRequestError
 from .transport import Transport, error_for_response
-from .types import ConnectLink, Connection
+from .types import Connection, ConnectLink
 
 
 def connections_path(slug: str, end_user: str | None = None) -> str:

@@ -25,3 +25,19 @@ packages = ["src/trustgate"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# pyflakes and pycodestyle errors, import order, and the upgrades a 3.10 floor
+# allows. Nothing opinionated beyond that: the checks are here to catch bugs.
+select = ["E", "F", "W", "I", "UP", "B"]
+# The formatter owns line length; a long string or URL is not a bug.
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+# The examples share one local helper module; keep it apart from the SDK import.
+known-first-party = ["trustgate"]
+known-local-folder = ["_config"]
