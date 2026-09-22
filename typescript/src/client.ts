@@ -1,10 +1,15 @@
 import { Agent, EndUserAgent, endUserAgent } from './agent.js'
 import { API_KEY_HEADER, resolveConfig, type ResolvedConfig, type TrustGateConfig } from './config.js'
 import { listConnections } from './connections.js'
-import { MissingToolsError, TrustGateError, UpstreamNotConnectedError } from './errors.js'
+import {
+	MissingToolsError,
+	TrustGateError,
+	UpstreamNotConnectedError,
+	type BlockedUpstream,
+} from './errors.js'
 import { MCPTransport } from './mcp.js'
-import { resolveToolName, type GatewayTool } from './types.js'
-import { selectConsumer, whoAmI, type KeyIdentity } from './whoami.js'
+import { resolveToolName, type Connection, type GatewayTool } from './types.js'
+import { selectConsumer, whoAmI, type KeyIdentity, type KeyUpstream } from './whoami.js'
 
 export type ConnectOptions = {
 	/**
@@ -102,12 +107,11 @@ export class TrustGate {
 			throw new MissingToolsError(missing, tools.map((tool) => tool.name))
 		}
 
-		const blocked = (consumer.upstreams ?? []).filter((upstream) => upstream.blocked)
+		const connections = await listConnections(this.config, consumer.slug, undefined, options.signal)
+		const blocked = blockedUpstreams(consumer.upstreams, connections)
 		if (blocked.length > 0) {
 			throw new UpstreamNotConnectedError(blocked)
 		}
-
-		const connections = await listConnections(this.config, consumer.slug, undefined, options.signal)
 		return new Agent(this.config, consumer.slug, transport, tools, missing, connections)
 	}
 
@@ -158,4 +162,23 @@ function asIdentityError(error: unknown, baseUrl: string): unknown {
 		)
 	}
 	return error
+}
+
+/**
+ * What this application still has to have connected before it can run.
+ *
+ * `whoami` answers it best, because it also names who has to act. But the field
+ * is absent on a gateway too old to send it, and an absent list is not an empty
+ * one: taking it for "nothing to connect" is how a batch gets past its own
+ * startup check and fails on the first row instead, which is the failure the
+ * check exists to prevent. So when it is missing the connections list answers,
+ * as it did before `whoami` carried this at all.
+ */
+function blockedUpstreams(upstreams: KeyUpstream[] | undefined, connections: Connection[]): BlockedUpstream[] {
+	if (upstreams) {
+		return upstreams.filter((upstream) => upstream.blocked)
+	}
+	return connections
+		.filter((connection) => connection.status !== 'connected')
+		.map((connection) => ({ server: connection.registry || connection.provider }))
 }
