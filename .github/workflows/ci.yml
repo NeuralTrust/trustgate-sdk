@@ -20,8 +20,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 18 is the floor package.json promises; the rest are the lines people run.
-        node: [18, 20, 22, 24]
+        # 22 is the floor package.json promises, and the oldest line still
+        # receiving security fixes; 24 is the active LTS and 26 current.
+        node: [22, 24, 26]
     defaults:
       run:
         working-directory: typescript

@@ -1,7 +1,7 @@
 # @neuraltrust/trustgate
 
-The TrustGate SDK for TypeScript. Node 18+, no runtime dependencies. ESM only:
-import it, or `require()` it on Node 20.19+ or 22.12+.
+The TrustGate SDK for TypeScript. Node 22+, no runtime dependencies. ESM only:
+import it, or `require()` it from Node 22.12.
 
 ```bash
 npm install @neuraltrust/trustgate

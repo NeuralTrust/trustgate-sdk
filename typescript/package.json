@@ -13,7 +13,7 @@
   "types": "./dist/index.d.ts",
   "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
   "files": ["dist", "src", "README.md", "LICENSE"],
-  "engines": { "node": ">=18" },
+  "engines": { "node": ">=22" },
   "sideEffects": false,
   "publishConfig": { "access": "public" },
   "scripts": {

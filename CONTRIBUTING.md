@@ -4,7 +4,7 @@ Two SDKs live here, with the same surface in each language:
 
 | Directory | Package | Toolchain |
 |---|---|---|
-| `typescript/` | `@neuraltrust/trustgate` on npm | Node 18+, npm |
+| `typescript/` | `@neuraltrust/trustgate` on npm | Node 22+, npm |
 | `python/` | `trustgate-sdk` on PyPI | Python 3.10+, [uv](https://docs.astral.sh/uv/) |
 | `examples/` | not published | one runnable program per use case, in both languages |
 
