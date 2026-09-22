@@ -100,12 +100,34 @@ def test_counts_an_account_that_has_gone_stale_as_still_blocking() -> None:
         client(gateway).connect()
 
 
-# A server carrying its own credential is not listed, and neither is anything at
-# all when the gateway could not read the accounts. Either way nothing is
-# blocking, and a startup that refused on "no list" would refuse every
-# application that needs no account.
+# A server carrying its own credential is not listed, so an empty list is
+# "nothing to connect" and the run starts.
 def test_starts_when_nothing_is_waiting_to_be_connected() -> None:
-    assert isinstance(client(FakeGateway()).connect(), Agent)
+    assert isinstance(client(FakeGateway(upstreams=[])).connect(), Agent)
+
+
+# A gateway too old to send `upstreams` sends nothing, and nothing is not an
+# empty list. Reading it as "nothing to connect" is how a batch gets past its own
+# startup check and fails on the first row instead - the exact failure the check
+# exists to prevent - so the connections list answers instead.
+def test_falls_back_to_the_connections_list_without_upstreams() -> None:
+    gateway = FakeGateway(
+        connections=[
+            {"provider": "com.notion/mcp", "status": "connected"},
+            {"provider": "app.linear/mcp", "registry": "Linear", "status": "not_connected"},
+        ]
+    )
+
+    with pytest.raises(UpstreamNotConnectedError) as caught:
+        client(gateway).connect()
+
+    assert caught.value.servers == ["Linear"]
+
+
+def test_starts_on_an_older_gateway_when_every_account_is_connected() -> None:
+    gateway = FakeGateway(connections=[{"provider": "com.notion/mcp", "status": "connected"}])
+
+    assert isinstance(client(gateway).connect(), Agent)
 
 
 # The same consumer, the same key: which actor a call is comes from the call, so

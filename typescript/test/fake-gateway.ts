@@ -18,7 +18,7 @@ export type FakeOptions = {
 	whoami?: unknown
 	/** Answers /whoami with this status instead of 200. */
 	whoamiStatus?: number
-	connections?: { provider: string; status: string; account_ref?: string }[]
+	connections?: { provider: string; registry?: string; status: string; account_ref?: string }[]
 	tools?: GatewayTool[]
 	/** Replies for tools/call, keyed by tool name. */
 	callResults?: Record<string, unknown>

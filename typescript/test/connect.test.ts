@@ -86,12 +86,35 @@ describe('connect', () => {
 		await expect(tg.connect()).rejects.toThrow(UpstreamNotConnectedError)
 	})
 
-	// A server carrying its own credential is not listed, and neither is
-	// anything at all when the gateway could not read the accounts. Either way
-	// there is nothing blocking, and a startup that refused on "no list" would
-	// refuse every application that needs no account.
+	// A server carrying its own credential is not listed, so an empty list is
+	// "nothing to connect" and the run starts.
 	it('starts when nothing is waiting to be connected', async () => {
-		const gateway = fakeGateway()
+		const gateway = fakeGateway({ upstreams: [] })
+		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
+
+		await expect(tg.connect()).resolves.toBeInstanceOf(Agent)
+	})
+
+	// A gateway too old to send `upstreams` sends nothing, and nothing is not an
+	// empty list. Reading it as "nothing to connect" is how a batch gets past its
+	// own startup check and fails on the first row instead — the exact failure
+	// the check exists to prevent — so the connections list answers instead.
+	it('falls back to the connections list when the gateway sends no upstreams', async () => {
+		const gateway = fakeGateway({
+			connections: [
+				{ provider: 'com.notion/mcp', status: 'connected' },
+				{ provider: 'app.linear/mcp', registry: 'Linear', status: 'not_connected' },
+			],
+		})
+		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
+
+		const error = await tg.connect().catch((e) => e)
+		expect(error).toBeInstanceOf(UpstreamNotConnectedError)
+		expect(error.servers).toEqual(['Linear'])
+	})
+
+	it('starts on an older gateway when every account is connected', async () => {
+		const gateway = fakeGateway({ connections: [{ provider: 'com.notion/mcp', status: 'connected' }] })
 		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
 
 		await expect(tg.connect()).resolves.toBeInstanceOf(Agent)

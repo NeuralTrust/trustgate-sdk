@@ -10,8 +10,8 @@ from .connections import list_connections
 from .errors import MissingToolsError, UpstreamNotConnectedError
 from .mcp import MCPTransport
 from .transport import Transport, UrllibTransport
-from .types import GatewayTool, resolve_tool_name
-from .whoami import KeyIdentity, select_consumer, who_am_i
+from .types import CONNECTED, Connection, GatewayTool, resolve_tool_name
+from .whoami import KeyIdentity, KeyUpstream, select_consumer, who_am_i
 
 
 @dataclass(frozen=True)
@@ -99,11 +99,11 @@ class TrustGate:
         tools = transport.list_tools()
         _check_requires(tools, list(requires or []))
 
-        blocked = [up for up in (consumer.upstreams or []) if up.blocked]
+        connections = list_connections(self._config, self._transport, consumer.slug)
+        blocked = _blocked_upstreams(consumer.upstreams, connections)
         if blocked:
             raise UpstreamNotConnectedError(blocked)
 
-        connections = list_connections(self._config, self._transport, consumer.slug)
         return Agent(
             self._config, self._transport, consumer.slug, transport, tools, connections
         )
@@ -141,3 +141,24 @@ def _check_requires(tools: list[GatewayTool], requires: list[str]) -> None:
     missing = [name for name in requires if resolve_tool_name(name, tools) not in names]
     if missing:
         raise MissingToolsError(missing, sorted(names))
+
+
+def _blocked_upstreams(
+    upstreams: list[KeyUpstream] | None, connections: list[Connection]
+) -> list[KeyUpstream]:
+    """What this application still has to have connected before it can run.
+
+    ``whoami`` answers it best, because it also names who has to act. But the
+    field is absent on a gateway too old to send it, and an absent list is not
+    an empty one: taking it for "nothing to connect" is how a batch gets past
+    its own startup check and fails on the first row instead, which is the
+    failure the check exists to prevent. So when it is missing the connections
+    list answers, as it did before ``whoami`` carried this at all.
+    """
+    if upstreams is not None:
+        return [upstream for upstream in upstreams if upstream.blocked]
+    return [
+        KeyUpstream(server=connection.registry or connection.provider)
+        for connection in connections
+        if connection.status != CONNECTED
+    ]
