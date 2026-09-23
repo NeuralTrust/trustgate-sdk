@@ -1,21 +1,49 @@
 {
   "name": "@neuraltrust/trustgate",
-  "version": "0.1.1",
+  "version": "0.1.3",
   "description": "TrustGate SDK — governed tools and models for agents, over the MCP and LLM planes of a TrustGate gateway.",
   "license": "Apache-2.0",
   "author": "NeuralTrust",
   "homepage": "https://docs.neuraltrust.ai/trustgate/mcp/connect",
-  "repository": { "type": "git", "url": "git+https://github.com/NeuralTrust/trustgate-sdk.git", "directory": "typescript" },
-  "bugs": { "url": "https://github.com/NeuralTrust/trustgate-sdk/issues" },
-  "keywords": ["mcp", "model-context-protocol", "agents", "llm", "gateway", "trustgate", "neuraltrust"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NeuralTrust/trustgate-sdk.git",
+    "directory": "typescript"
+  },
+  "bugs": {
+    "url": "https://github.com/NeuralTrust/trustgate-sdk/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "agents",
+    "llm",
+    "gateway",
+    "trustgate",
+    "neuraltrust"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
-  "files": ["dist", "src", "README.md", "LICENSE"],
-  "engines": { "node": ">=22" },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "sideEffects": false,
-  "publishConfig": { "access": "public" },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "prepublishOnly": "npm run typecheck && npm test && npm run build",
