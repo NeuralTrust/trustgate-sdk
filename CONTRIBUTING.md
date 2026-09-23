@@ -39,15 +39,22 @@ runtime dependency needs a reason in the pull request.
 
 ## Releasing
 
-Maintainers only. Both packages ship together under one version.
+Maintainers only. Both packages ship together under one version. `scripts/release.sh`
+writes the three places CI checks (`typescript/package.json`,
+`python/pyproject.toml`, `__version__` in `python/src/trustgate/__init__.py`)
+and the lockfiles that follow them.
 
-1. Set the same version in `typescript/package.json`, `python/pyproject.toml`
-   and `__version__` in `python/src/trustgate/__init__.py`. CI fails if they
-   disagree.
-2. Merge that to `main`.
-3. Tag the merge commit `vX.Y.Z` and push the tag. The **Release** workflow
-   checks the tag against the three versions, builds and tests both packages,
-   publishes them, and creates the GitHub release with the artifacts attached.
+```bash
+scripts/release.sh 0.2.0              # bump the files
+scripts/release.sh 0.2.0 --tag        # bump, commit, tag v0.2.0
+scripts/release.sh tag --push         # tag whatever is already on the branch, push it
+```
+
+1. Bump (a PR is fine). Merge that to `main` if the bump was not already there.
+2. On the commit you want to ship: `scripts/release.sh tag --push`. The
+   **Release** workflow checks the tag against the three versions, builds and
+   tests both packages, publishes them, and creates the GitHub release with the
+   artifacts attached.
 
 The workflow publishes through trusted publishing, so no registry token is
 stored in this repository. That needs setting up once:
