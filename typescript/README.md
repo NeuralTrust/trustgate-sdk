@@ -1,5 +1,8 @@
 # @neuraltrust/trustgate
 
+[![npm](https://img.shields.io/npm/v/%40neuraltrust%2Ftrustgate)](https://www.npmjs.com/package/@neuraltrust/trustgate)
+[Documentation](https://docs.neuraltrust.ai/sdks/trustgate/overview) · [Python package](https://pypi.org/project/trustgate-sdk/) · [GitHub](https://github.com/NeuralTrust/trustgate-sdk)
+
 The TrustGate SDK for TypeScript. Node 22+, no runtime dependencies. ESM only:
 import it, or `require()` it from Node 22.12.
 
@@ -123,6 +126,22 @@ strict asked for are stripped unless the tool's own schema accepts them.
 | `PlaneUnavailableError` | the key reaches no application on that plane |
 | `AuthenticationError`, `RateLimitedError`, `ServiceUnavailableError`, `TrustGateServerError` | as named |
 
+## Documentation
+
+The full guide lives at [docs.neuraltrust.ai](https://docs.neuraltrust.ai/sdks/trustgate/overview):
+
+| Page | What it covers |
+|---|---|
+| [Quickstart](https://docs.neuraltrust.ai/sdks/trustgate/overview) | Install, one key, `connect()`'s startup check, `identity()` |
+| [Tools](https://docs.neuraltrust.ai/sdks/trustgate/tools) | The MCP endpoint for a framework, or toolkits for a provider's API |
+| [Acting for end users](https://docs.neuraltrust.ai/sdks/trustgate/end-users) | Per-user accounts, consent errors, connect links |
+| [Models](https://docs.neuraltrust.ai/sdks/trustgate/models) | A provider's own client pointed at the LLM plane |
+| [Configuration](https://docs.neuraltrust.ai/sdks/trustgate/configuration) | Every option and environment variable, Hybrid gateways, regions |
+| [Errors](https://docs.neuraltrust.ai/sdks/trustgate/errors) | Every failure, and whose it is to fix |
+
+The same SDK for Python: [`trustgate-sdk` on PyPI](https://pypi.org/project/trustgate-sdk/). Source,
+examples and issues: [github.com/NeuralTrust/trustgate-sdk](https://github.com/NeuralTrust/trustgate-sdk).
+
 ## Development
 
 ```bash
@@ -132,4 +151,4 @@ npm test
 npm run build
 ```
 
-[CONTRIBUTING.md](../CONTRIBUTING.md) has every check CI runs.
+[CONTRIBUTING.md](https://github.com/NeuralTrust/trustgate-sdk/blob/main/CONTRIBUTING.md) has every check CI runs.
