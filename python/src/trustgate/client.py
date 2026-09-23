@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .agent import Agent, EndUserAgent, end_user_agent
-from .config import API_KEY_HEADER, resolve_config
+from .config import API_KEY_HEADER, Config, resolve_config
 from .connections import list_connections
 from .errors import MissingToolsError, UpstreamNotConnectedError
 from .mcp import MCPTransport
@@ -115,16 +115,17 @@ class TrustGate:
         # Accounts before tools: a server with no account for the application
         # can fail the listing itself, which would surface as a bare gateway
         # error before this check - the one that says who fixes it - ever ran.
-        connections = list_connections(self._config, self._transport, consumer.slug)
+        plane = _on_mcp_plane(self._config, consumer.slug, consumer.url)
+        connections = list_connections(plane, self._transport, consumer.slug)
         blocked = _blocked_upstreams(consumer.upstreams, connections)
         if blocked:
             raise UpstreamNotConnectedError(blocked)
 
-        transport = MCPTransport(self._config, self._transport, consumer.url)
+        transport = MCPTransport(plane, self._transport, consumer.url)
         tools = transport.list_tools()
         _check_requires(tools, list(requires or []))
 
-        return Agent(self._config, self._transport, consumer.slug, transport, tools, connections)
+        return Agent(plane, self._transport, consumer.slug, transport, tools, connections)
 
     def for_end_user(self, end_user: str, requires: list[str] | None = None) -> EndUserAgent:
         """The handle for one named person, on the same consumer and the same key.
@@ -140,10 +141,31 @@ class TrustGate:
             self.identity(), "MCP", self._config.mcp_consumer, "mcp_consumer"
         )
         agent = end_user_agent(
-            self._config, self._transport, consumer.slug, end_user, consumer.url, []
+            _on_mcp_plane(self._config, consumer.slug, consumer.url),
+            self._transport,
+            consumer.slug,
+            end_user,
+            consumer.url,
+            [],
         )
         _check_requires(agent.refresh(), list(requires or []))
         return agent
+
+
+def _on_mcp_plane(config: Config, slug: str, url: str) -> Config:
+    """The config for calls on the MCP plane, addressed where whoami said it is.
+
+    The consumer's own endpoints (``/<slug>/connections``) sit next to its MCP
+    endpoint, on that plane's host. That is ``base_url`` when the caller gave
+    their gateway's address, but not when they started from the shared entry
+    point, which serves whoami and nothing else - so they always go to the
+    plane the answer named.
+    """
+    suffix = f"/{slug}/mcp"
+    trimmed = url.rstrip("/")
+    if not trimmed.endswith(suffix):
+        return config
+    return replace(config, base_url=trimmed[: -len(suffix)])
 
 
 def _check_requires(tools: list[GatewayTool], requires: list[str]) -> None:

@@ -15,6 +15,12 @@ API_KEY_HEADER = "X-AG-API-Key"
 #: The header that names which of the application's end users a call is for.
 END_USER_HEADER = "X-NeuralTrust-End-User"
 
+#: Where a client with nothing but its key starts. The gateway finds which
+#: gateway the key belongs to and answers with that gateway's own addresses, so
+#: nothing else is called here. Set ``base_url`` / ``TRUSTGATE_URL`` only for a
+#: gateway of your own (a private data plane).
+DEFAULT_BASE_URL = "https://gateway.neuraltrust.ai"
+
 
 @dataclass(frozen=True)
 class Config:
@@ -32,10 +38,10 @@ def resolve_config(
     llm_consumer: str | None = None,
     timeout: float = 30.0,
 ) -> Config:
-    resolved_url = (base_url or os.environ.get("TRUSTGATE_URL") or "").strip().rstrip("/")
+    resolved_url = (
+        (base_url or "").strip() or os.environ.get("TRUSTGATE_URL", "").strip() or DEFAULT_BASE_URL
+    ).rstrip("/")
     resolved_key = (api_key or os.environ.get("TRUSTGATE_API_KEY") or "").strip()
-    if not resolved_url:
-        raise TrustGateError("base_url is required (or set TRUSTGATE_URL)")
     if not resolved_url.startswith(("http://", "https://")):
         raise TrustGateError(f'base_url must be an http(s) URL, got "{resolved_url}"')
     if not resolved_key:

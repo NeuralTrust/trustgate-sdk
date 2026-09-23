@@ -12,11 +12,13 @@ npm install @neuraltrust/trustgate
 ```ts
 import { TrustGate, ToolFormat } from '@neuraltrust/trustgate'
 
-const tg = new TrustGate()   // TRUSTGATE_URL + TRUSTGATE_API_KEY
+const tg = new TrustGate()   // TRUSTGATE_API_KEY
 ```
 
-Two values, or none if they are in the environment. The applications behind
-the key are asked for: `tg.identity()` asks the gateway once and remembers it.
+The key is the whole configuration, or nothing if it is in the environment.
+The gateway it belongs to, and the applications behind it, are asked for:
+`tg.identity()` asks once and remembers it. Set `TRUSTGATE_URL` (or `baseUrl`)
+only for a gateway of your own, such as a private data plane.
 
 ```ts
 const { gateway, key, consumers } = await tg.identity()

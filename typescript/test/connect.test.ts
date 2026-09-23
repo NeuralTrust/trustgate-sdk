@@ -295,3 +295,46 @@ describe('resolving a key', () => {
 		expect(String(error)).toMatch(/no consumer path after it/)
 	})
 })
+
+// A key is enough: with no address given, the SDK asks the shared entry point,
+// which finds the gateway from the key and answers with that gateway's own
+// planes. Nothing else is ever sent to the entry point.
+describe('starting from the key alone', () => {
+	const planes = {
+		gateway: 'acme',
+		key: { name: 'prod' },
+		consumers: [{ slug: 'acme', name: 'Acme Agent', type: 'MCP', active: true, url: 'https://acme.mcp.test/acme/mcp' }],
+	}
+
+	it('asks the shared entry point, then talks only to the planes it named', async () => {
+		// Read the way the SDK reads it, so the test needs no Node typings.
+		const env = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env ?? {}
+		const saved = env.TRUSTGATE_URL
+		delete env.TRUSTGATE_URL
+		try {
+			const gateway = fakeGateway({ whoami: planes })
+			const tg = new TrustGate({ apiKey: 'ag_secret', fetch: gateway.fetch })
+
+			const agent = await tg.connect()
+
+			expect(gateway.requests[0].url).toBe('https://gateway.neuraltrust.ai/whoami')
+			expect(agent.mcp.url).toBe('https://acme.mcp.test/acme/mcp')
+			const rest = gateway.requests.slice(1).map((r) => r.url)
+			expect(rest.length).toBeGreaterThan(0)
+			expect(rest.every((url) => url.startsWith('https://acme.mcp.test/'))).toBe(true)
+			expect(rest).toContain('https://acme.mcp.test/acme/connections')
+		} finally {
+			if (saved !== undefined) env.TRUSTGATE_URL = saved
+		}
+	})
+
+	it('sends an end user’s connections to the plane too', async () => {
+		const gateway = fakeGateway({ whoami: planes })
+		const tg = new TrustGate({ apiKey: 'ag_secret', baseUrl: 'https://gateway.neuraltrust.ai', fetch: gateway.fetch })
+
+		const agent = await tg.forEndUser('user_1')
+		await agent.connections()
+
+		expect(gateway.requests.at(-1)?.url).toBe('https://acme.mcp.test/acme/connections?end_user=user_1')
+	})
+})

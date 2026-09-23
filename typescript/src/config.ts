@@ -1,9 +1,17 @@
 import { TrustGateError } from './errors.js'
 
+/**
+ * Where a client with nothing but its key starts. The gateway finds which
+ * gateway the key belongs to and answers with that gateway's own addresses, so
+ * nothing else is called here.
+ */
+export const DEFAULT_BASE_URL = 'https://gateway.neuraltrust.ai'
+
 export type TrustGateConfig = {
 	/**
-	 * The gateway's base URL, without a consumer path:
-	 * `https://gw.acme.ai`. Defaults to `TRUSTGATE_URL`.
+	 * Where to ask what the key reaches. Defaults to `TRUSTGATE_URL`, then to
+	 * {@link DEFAULT_BASE_URL}. Set it only for a gateway of your own (a private
+	 * data plane): on NeuralTrust's cloud the key is enough.
 	 */
 	baseUrl?: string
 	/** The consumer's API key. Defaults to `TRUSTGATE_API_KEY`. */
@@ -41,11 +49,8 @@ function fromEnv(name: string): string | undefined {
 }
 
 export function resolveConfig(config: TrustGateConfig = {}): ResolvedConfig {
-	const baseUrl = (config.baseUrl ?? fromEnv('TRUSTGATE_URL') ?? '').trim().replace(/\/+$/, '')
+	const baseUrl = (config.baseUrl?.trim() || fromEnv('TRUSTGATE_URL')?.trim() || DEFAULT_BASE_URL).replace(/\/+$/, '')
 	const apiKey = (config.apiKey ?? fromEnv('TRUSTGATE_API_KEY') ?? '').trim()
-	if (!baseUrl) {
-		throw new TrustGateError('baseUrl is required (or set TRUSTGATE_URL)')
-	}
 	if (!/^https?:\/\//.test(baseUrl)) {
 		throw new TrustGateError(`baseUrl must be an http(s) URL, got "${baseUrl}"`)
 	}
