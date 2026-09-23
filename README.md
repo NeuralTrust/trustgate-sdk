@@ -68,7 +68,7 @@ const tg = new TrustGate({ apiKey: 'ag_…' })
 
 That is the whole configuration. A key belongs to one gateway, and the
 applications behind it were created in the console — so the SDK asks
-`https://gateway.neuraltrust.ai` which gateway the key belongs to, which
+`https://agentgateway.neuraltrust.ai` which gateway the key belongs to, which
 applications it reaches and where each is served, and from then on talks only
 to those addresses. Pass `baseUrl` only for a gateway of your own (a private
 data plane), which answers the same question itself. Name a

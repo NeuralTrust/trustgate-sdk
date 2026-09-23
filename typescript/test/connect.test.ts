@@ -317,7 +317,7 @@ describe('starting from the key alone', () => {
 
 			const agent = await tg.connect()
 
-			expect(gateway.requests[0].url).toBe('https://gateway.neuraltrust.ai/whoami')
+			expect(gateway.requests[0].url).toBe('https://agentgateway.neuraltrust.ai/whoami')
 			expect(agent.mcp.url).toBe('https://acme.mcp.test/acme/mcp')
 			const rest = gateway.requests.slice(1).map((r) => r.url)
 			expect(rest.length).toBeGreaterThan(0)
@@ -330,7 +330,7 @@ describe('starting from the key alone', () => {
 
 	it('sends an end user’s connections to the plane too', async () => {
 		const gateway = fakeGateway({ whoami: planes })
-		const tg = new TrustGate({ apiKey: 'ag_secret', baseUrl: 'https://gateway.neuraltrust.ai', fetch: gateway.fetch })
+		const tg = new TrustGate({ apiKey: 'ag_secret', baseUrl: 'https://agentgateway.neuraltrust.ai', fetch: gateway.fetch })
 
 		const agent = await tg.forEndUser('user_1')
 		await agent.connections()

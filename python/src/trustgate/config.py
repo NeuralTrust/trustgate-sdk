@@ -19,7 +19,7 @@ END_USER_HEADER = "X-NeuralTrust-End-User"
 #: gateway the key belongs to and answers with that gateway's own addresses, so
 #: nothing else is called here. Set ``base_url`` / ``TRUSTGATE_URL`` only for a
 #: gateway of your own (a private data plane).
-DEFAULT_BASE_URL = "https://gateway.neuraltrust.ai"
+DEFAULT_BASE_URL = "https://agentgateway.neuraltrust.ai"
 
 
 @dataclass(frozen=True)

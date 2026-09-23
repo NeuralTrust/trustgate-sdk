@@ -5,7 +5,7 @@ import { TrustGateError } from './errors.js'
  * gateway the key belongs to and answers with that gateway's own addresses, so
  * nothing else is called here.
  */
-export const DEFAULT_BASE_URL = 'https://gateway.neuraltrust.ai'
+export const DEFAULT_BASE_URL = 'https://agentgateway.neuraltrust.ai'
 
 export type TrustGateConfig = {
 	/**
