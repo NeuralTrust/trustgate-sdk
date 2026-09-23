@@ -18,6 +18,8 @@ export type FakeOptions = {
 	whoami?: unknown
 	/** Answers /whoami with this status instead of 200. */
 	whoamiStatus?: number
+	/** The error code that status carries. Default `not_found`. */
+	whoamiError?: string
 	connections?: { provider: string; registry?: string; status: string; account_ref?: string }[]
 	tools?: GatewayTool[]
 	/** Replies for tools/call, keyed by tool name. */
@@ -52,7 +54,7 @@ export function fakeGateway(options: FakeOptions = {}) {
 
 		if (url.endsWith('/whoami')) {
 			if (options.whoamiStatus) {
-				return json(options.whoamiStatus, { error: 'not_found', message: 'no route' })
+				return json(options.whoamiStatus, { error: options.whoamiError ?? 'not_found', message: 'no route' })
 			}
 			return json(
 				200,

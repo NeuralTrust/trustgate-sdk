@@ -18,7 +18,8 @@ const tg = new TrustGate()   // TRUSTGATE_API_KEY
 The key is the whole configuration, or nothing if it is in the environment.
 The gateway it belongs to, and the applications behind it, are asked for:
 `tg.identity()` asks once and remembers it. Set `TRUSTGATE_URL` (or `baseUrl`)
-only for a gateway of your own, such as a private data plane.
+only for a Hybrid gateway, to the MCP host its own data plane is published on:
+the NeuralTrust cloud does not serve that gateway.
 
 ```ts
 const { gateway, key, consumers } = await tg.identity()

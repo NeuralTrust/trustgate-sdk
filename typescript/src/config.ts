@@ -5,13 +5,14 @@ import { TrustGateError } from './errors.js'
  * gateway the key belongs to and answers with that gateway's own addresses, so
  * nothing else is called here.
  */
-export const DEFAULT_BASE_URL = 'https://agentgateway.neuraltrust.ai'
+export const DEFAULT_BASE_URL = 'https://agentgateway-mcp.neuraltrust.ai'
 
 export type TrustGateConfig = {
 	/**
 	 * Where to ask what the key reaches. Defaults to `TRUSTGATE_URL`, then to
-	 * {@link DEFAULT_BASE_URL}. Set it only for a gateway of your own (a private
-	 * data plane): on NeuralTrust's cloud the key is enough.
+	 * {@link DEFAULT_BASE_URL}. Set it only for a Hybrid gateway, to the MCP host
+	 * its own data plane is published on: on NeuralTrust's cloud the key is
+	 * enough.
 	 */
 	baseUrl?: string
 	/** The consumer's API key. Defaults to `TRUSTGATE_API_KEY`. */

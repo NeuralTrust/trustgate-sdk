@@ -186,8 +186,22 @@ function withoutVersion(url: string): string {
 	return trimmed.endsWith('/v1') ? trimmed.slice(0, -'/v1'.length) : trimmed
 }
 
+/**
+ * The code a plane answers with for a gateway it does not serve: a Hybrid one,
+ * which only its own data plane does.
+ */
+const SERVED_ELSEWHERE = 'gateway_served_by_external_data_plane'
+
 /** A gateway that cannot answer for a key cannot be used with one secret. */
 function asIdentityError(error: unknown, baseUrl: string): unknown {
+	if (error instanceof TrustGateError && error.code === SERVED_ELSEWHERE) {
+		return new TrustGateError(
+			`this key's gateway runs on its own (Hybrid) data plane, which ${baseUrl} does ` +
+				'not serve. Set baseUrl (or TRUSTGATE_URL) to the MCP host that data plane ' +
+				'is published on.',
+			{ status: error.status, code: error.code, cause: error }
+		)
+	}
 	if (error instanceof TrustGateError && error.status === 404) {
 		return new TrustGateError(
 			`${baseUrl}/whoami answered 404, so the SDK cannot resolve which consumers ` +

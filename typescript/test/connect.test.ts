@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { TrustGate } from '../src/client.js'
 import { Agent, EndUserAgent } from '../src/agent.js'
-import { MissingToolsError, UpstreamNotConnectedError } from '../src/errors.js'
+import { MissingToolsError, TrustGateError, UpstreamNotConnectedError } from '../src/errors.js'
 import { END_USER_HEADER } from '../src/config.js'
 import { fakeGateway } from './fake-gateway.js'
 
@@ -294,6 +294,17 @@ describe('resolving a key', () => {
 		expect(String(error)).toContain(`${base.baseUrl}/whoami answered 404`)
 		expect(String(error)).toMatch(/no consumer path after it/)
 	})
+
+	it('says where to point a Hybrid key the cloud does not serve', async () => {
+		const gateway = fakeGateway({ whoamiStatus: 421, whoamiError: 'gateway_served_by_external_data_plane' })
+		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
+
+		const error = await tg.connect().catch((e: unknown) => e)
+		expect(error).toBeInstanceOf(TrustGateError)
+		expect((error as TrustGateError).status).toBe(421)
+		expect(String(error)).toMatch(/Hybrid\) data plane, which https:\/\/gw\.test does not serve/)
+		expect(String(error)).toMatch(/Set baseUrl \(or TRUSTGATE_URL\)/)
+	})
 })
 
 // A key is enough: with no address given, the SDK asks the shared entry point,
@@ -317,7 +328,7 @@ describe('starting from the key alone', () => {
 
 			const agent = await tg.connect()
 
-			expect(gateway.requests[0].url).toBe('https://agentgateway.neuraltrust.ai/whoami')
+			expect(gateway.requests[0].url).toBe('https://agentgateway-mcp.neuraltrust.ai/whoami')
 			expect(agent.mcp.url).toBe('https://acme.mcp.test/acme/mcp')
 			const rest = gateway.requests.slice(1).map((r) => r.url)
 			expect(rest.length).toBeGreaterThan(0)
@@ -330,7 +341,7 @@ describe('starting from the key alone', () => {
 
 	it('sends an end user’s connections to the plane too', async () => {
 		const gateway = fakeGateway({ whoami: planes })
-		const tg = new TrustGate({ apiKey: 'ag_secret', baseUrl: 'https://agentgateway.neuraltrust.ai', fetch: gateway.fetch })
+		const tg = new TrustGate({ apiKey: 'ag_secret', baseUrl: 'https://agentgateway-mcp.neuraltrust.ai', fetch: gateway.fetch })
 
 		const agent = await tg.forEndUser('user_1')
 		await agent.connections()

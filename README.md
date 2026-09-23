@@ -68,10 +68,12 @@ const tg = new TrustGate({ apiKey: 'ag_…' })
 
 That is the whole configuration. A key belongs to one gateway, and the
 applications behind it were created in the console — so the SDK asks
-`https://agentgateway.neuraltrust.ai` which gateway the key belongs to, which
+`https://agentgateway-mcp.neuraltrust.ai` which gateway the key belongs to, which
 applications it reaches and where each is served, and from then on talks only
-to those addresses. Pass `baseUrl` only for a gateway of your own (a private
-data plane), which answers the same question itself. Name a
+to those addresses. Pass `baseUrl` only for a Hybrid gateway: only its own
+data plane serves it, so point `baseUrl` at the MCP host that plane is published
+on, which answers the same question itself. A Hybrid key sent to the cloud is
+refused with that advice. Name a
 slug only when a key reaches two applications on the same plane, which the SDK
 will not guess at.
 
