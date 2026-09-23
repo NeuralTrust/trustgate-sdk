@@ -346,7 +346,7 @@ def test_starts_from_the_key_alone_and_talks_only_to_the_planes_named(
 
     agent = TrustGate(api_key="ag_secret", transport=gateway).connect()
 
-    assert gateway.requests[0].url == "https://gateway.neuraltrust.ai/whoami"
+    assert gateway.requests[0].url == "https://agentgateway.neuraltrust.ai/whoami"
     assert agent.mcp.url == "https://acme.mcp.test/acme/mcp"
     rest = [request.url for request in gateway.requests[1:]]
     assert rest and all(url.startswith("https://acme.mcp.test/") for url in rest)
@@ -357,7 +357,7 @@ def test_sends_an_end_users_connections_to_the_plane_too() -> None:
     gateway = FakeGateway(whoami=PLANES)
 
     agent = TrustGate(
-        api_key="ag_secret", base_url="https://gateway.neuraltrust.ai", transport=gateway
+        api_key="ag_secret", base_url="https://agentgateway.neuraltrust.ai", transport=gateway
     ).for_end_user("user_1")
     agent.connections()
 
