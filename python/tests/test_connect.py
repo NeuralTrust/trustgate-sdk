@@ -318,3 +318,47 @@ def test_end_user_can_read_its_connections_and_mint_a_link() -> None:
     assert connections[0].provider == "com.notion/mcp"
     assert link.ticket == "t-1"
     assert link.provider == "com.notion/mcp"
+
+
+# A key is enough: with no address given, the SDK asks the shared entry point,
+# which finds the gateway from the key and answers with that gateway's own
+# planes. Nothing else is ever sent to the entry point.
+PLANES = {
+    "gateway": "acme",
+    "key": {"name": "prod"},
+    "consumers": [
+        {
+            "slug": "acme",
+            "name": "Acme Agent",
+            "type": "MCP",
+            "active": True,
+            "url": "https://acme.mcp.test/acme/mcp",
+        }
+    ],
+}
+
+
+def test_starts_from_the_key_alone_and_talks_only_to_the_planes_named(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("TRUSTGATE_URL", raising=False)
+    gateway = FakeGateway(whoami=PLANES)
+
+    agent = TrustGate(api_key="ag_secret", transport=gateway).connect()
+
+    assert gateway.requests[0].url == "https://gateway.neuraltrust.ai/whoami"
+    assert agent.mcp.url == "https://acme.mcp.test/acme/mcp"
+    rest = [request.url for request in gateway.requests[1:]]
+    assert rest and all(url.startswith("https://acme.mcp.test/") for url in rest)
+    assert "https://acme.mcp.test/acme/connections" in rest
+
+
+def test_sends_an_end_users_connections_to_the_plane_too() -> None:
+    gateway = FakeGateway(whoami=PLANES)
+
+    agent = TrustGate(
+        api_key="ag_secret", base_url="https://gateway.neuraltrust.ai", transport=gateway
+    ).for_end_user("user_1")
+    agent.connections()
+
+    assert gateway.requests[-1].url == "https://acme.mcp.test/acme/connections?end_user=user_1"

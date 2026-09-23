@@ -114,19 +114,20 @@ export class TrustGate {
 		// Accounts before tools: a server with no account for the application can
 		// fail the listing itself, which would surface as a bare gateway error
 		// before this check — the one that says who fixes it — ever ran.
-		const connections = await listConnections(this.config, consumer.slug, undefined, options.signal)
+		const plane = onMCPPlane(this.config, consumer)
+		const connections = await listConnections(plane, consumer.slug, undefined, options.signal)
 		const blocked = blockedUpstreams(consumer.upstreams, connections)
 		if (blocked.length > 0) {
 			throw new UpstreamNotConnectedError(blocked)
 		}
 
-		const transport = new MCPTransport(this.config, consumer.url)
+		const transport = new MCPTransport(plane, consumer.url)
 		const tools = await transport.listTools(options.signal)
 		const missing = missingTools(tools, options.requires ?? [])
 		if (missing.length > 0) {
 			throw new MissingToolsError(missing, tools.map((tool) => tool.name))
 		}
-		return new Agent(this.config, consumer.slug, transport, tools, missing, connections)
+		return new Agent(plane, consumer.slug, transport, tools, missing, connections)
 	}
 
 	/**
@@ -141,7 +142,7 @@ export class TrustGate {
 	async forEndUser(endUser: string, options: ConnectOptions = {}): Promise<EndUserAgent> {
 		const identity = await this.identity(options.signal)
 		const consumer = selectConsumer(identity, 'MCP', this.config.mcpConsumer, 'mcpConsumer')
-		const agent = endUserAgent(this.config, consumer.slug, endUser, consumer.url, [])
+		const agent = endUserAgent(onMCPPlane(this.config, consumer), consumer.slug, endUser, consumer.url, [])
 		const tools = await agent.refresh(options.signal)
 		const missing = missingTools(tools, options.requires ?? [])
 		if (missing.length > 0) {
@@ -161,6 +162,23 @@ export class TrustGate {
 function missingTools(tools: GatewayTool[], required: string[]): string[] {
 	const names = new Set(tools.map((tool) => tool.name))
 	return required.filter((name) => !names.has(resolveToolName(name, tools)))
+}
+
+/**
+ * The config for calls on the MCP plane, addressed where /whoami said the
+ * consumer is served.
+ *
+ * The consumer's own endpoints (`/<slug>/connections`) sit next to its MCP
+ * endpoint, on that plane's host. That is `baseUrl` when the caller gave their
+ * gateway's address, but not when they started from the shared entry point,
+ * which serves /whoami and nothing else — so they are always sent to the
+ * plane the answer named.
+ */
+function onMCPPlane(config: ResolvedConfig, consumer: { slug: string; url: string }): ResolvedConfig {
+	const suffix = `/${consumer.slug}/mcp`
+	const url = consumer.url.replace(/\/+$/, '')
+	if (!url.endsWith(suffix)) return config
+	return { ...config, baseUrl: url.slice(0, -suffix.length) }
 }
 
 function withoutVersion(url: string): string {
