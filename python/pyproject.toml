@@ -29,7 +29,8 @@ dependencies = []
 
 [project.urls]
 Homepage = "https://github.com/NeuralTrust/trustgate-sdk"
-Documentation = "https://docs.neuraltrust.ai/trustgate/mcp/connect"
+Documentation = "https://docs.neuraltrust.ai/sdks/trustgate/overview"
+Repository = "https://github.com/NeuralTrust/trustgate-sdk"
 Issues = "https://github.com/NeuralTrust/trustgate-sdk/issues"
 
 [project.optional-dependencies]

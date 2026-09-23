@@ -1,5 +1,9 @@
 # TrustGate SDK
 
+[![npm](https://img.shields.io/npm/v/%40neuraltrust%2Ftrustgate)](https://www.npmjs.com/package/@neuraltrust/trustgate)
+[![PyPI](https://img.shields.io/pypi/v/trustgate-sdk)](https://pypi.org/project/trustgate-sdk/)
+[![Docs](https://img.shields.io/badge/docs-docs.neuraltrust.ai-9053ff)](https://docs.neuraltrust.ai/sdks/trustgate/overview)
+
 Point an agent at a TrustGate gateway, in TypeScript or Python.
 
 An admin creates an application for the agent in the NeuralTrust console and
@@ -158,8 +162,12 @@ cd examples/typescript && cp .env.example .env && npm install && npm run openai
 
 ## Reading the docs for your language
 
-- [`typescript/`](typescript) — `@neuraltrust/trustgate`
-- [`python/`](python) — `trustgate-sdk`
+- [`typescript/`](typescript): [`@neuraltrust/trustgate`](https://www.npmjs.com/package/@neuraltrust/trustgate) on npm
+- [`python/`](python): [`trustgate-sdk`](https://pypi.org/project/trustgate-sdk/) on PyPI
+
+The full guide, with both languages side by side, is at
+[docs.neuraltrust.ai/sdks/trustgate](https://docs.neuraltrust.ai/sdks/trustgate/overview): tools,
+acting for end users, models, configuration and errors.
 
 Both track the same gateway contract and the same behaviour; the tests in each
 are written against the same cases.
