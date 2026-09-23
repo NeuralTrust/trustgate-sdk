@@ -8,6 +8,7 @@ from trustgate import (
     MissingToolsError,
     PlaneUnavailableError,
     TrustGate,
+    TrustGateError,
     UpstreamNotConnectedError,
 )
 from trustgate.config import END_USER_HEADER
@@ -308,6 +309,16 @@ def test_shows_the_address_it_asked_when_whoami_is_not_there() -> None:
     assert "no consumer path after it" in str(caught.value)
 
 
+def test_says_where_to_point_a_hybrid_key_the_cloud_does_not_serve() -> None:
+    gateway = FakeGateway(whoami_status=421, whoami_error="gateway_served_by_external_data_plane")
+    with pytest.raises(TrustGateError) as caught:
+        client(gateway).connect()
+
+    assert caught.value.status == 421
+    assert "(Hybrid) data plane, which https://gw.test does not serve" in str(caught.value)
+    assert "Set base_url (or TRUSTGATE_URL)" in str(caught.value)
+
+
 def test_end_user_can_read_its_connections_and_mint_a_link() -> None:
     gateway = FakeGateway()
     alice = client(gateway).connect().for_end_user("user_123")
@@ -346,7 +357,7 @@ def test_starts_from_the_key_alone_and_talks_only_to_the_planes_named(
 
     agent = TrustGate(api_key="ag_secret", transport=gateway).connect()
 
-    assert gateway.requests[0].url == "https://agentgateway.neuraltrust.ai/whoami"
+    assert gateway.requests[0].url == "https://agentgateway-mcp.neuraltrust.ai/whoami"
     assert agent.mcp.url == "https://acme.mcp.test/acme/mcp"
     rest = [request.url for request in gateway.requests[1:]]
     assert rest and all(url.startswith("https://acme.mcp.test/") for url in rest)
@@ -357,7 +368,7 @@ def test_sends_an_end_users_connections_to_the_plane_too() -> None:
     gateway = FakeGateway(whoami=PLANES)
 
     agent = TrustGate(
-        api_key="ag_secret", base_url="https://agentgateway.neuraltrust.ai", transport=gateway
+        api_key="ag_secret", base_url="https://agentgateway-mcp.neuraltrust.ai", transport=gateway
     ).for_end_user("user_1")
     agent.connections()
 

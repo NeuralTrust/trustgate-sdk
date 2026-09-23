@@ -1,9 +1,9 @@
 """Where the examples get their placeholders from.
 
-Every one of them needs the same two things — a gateway and a key — and the
-SDK already reads them from TRUSTGATE_URL and TRUSTGATE_API_KEY. This only adds
-the part the SDK cannot: saying which variable is missing, and where to find
-its value, instead of failing on the first request.
+Every one of them needs a key, and the SDK already reads it from
+TRUSTGATE_API_KEY (and TRUSTGATE_URL, when the gateway is not NeuralTrust's
+cloud). This only adds the part the SDK cannot: saying which variable is
+missing, and where to find its value, instead of failing on the first request.
 """
 
 import os
@@ -41,12 +41,8 @@ def require(name: str, where: str) -> str:
 
 
 def gateway_env() -> None:
-    """Checks the two the SDK reads, before it is constructed."""
+    """Checks the key the SDK reads, before it is constructed."""
     load_env_file()
-    require(
-        "TRUSTGATE_URL",
-        "It is your gateway's base URL — the Connect tab of any application shows it.",
-    )
     require(
         "TRUSTGATE_API_KEY",
         "It is the application's API key — the Authentication block of its General tab issues one.",

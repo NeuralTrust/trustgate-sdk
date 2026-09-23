@@ -33,6 +33,8 @@ class FakeGateway:
     whoami: Any | None = None
     #: Answers /whoami with this status instead of 200.
     whoami_status: int = 0
+    #: The error code that status carries.
+    whoami_error: str = "not_found"
     connections: list[dict[str, Any]] = field(
         default_factory=lambda: [{"provider": "com.notion/mcp", "status": "connected"}]
     )
@@ -68,7 +70,9 @@ class FakeGateway:
 
         if url.endswith("/whoami"):
             if self.whoami_status:
-                return _json(self.whoami_status, {"error": "not_found", "message": "no route"})
+                return _json(
+                    self.whoami_status, {"error": self.whoami_error, "message": "no route"}
+                )
             return _json(
                 200,
                 self.whoami

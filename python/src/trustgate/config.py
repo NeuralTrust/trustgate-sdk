@@ -18,8 +18,8 @@ END_USER_HEADER = "X-NeuralTrust-End-User"
 #: Where a client with nothing but its key starts. The gateway finds which
 #: gateway the key belongs to and answers with that gateway's own addresses, so
 #: nothing else is called here. Set ``base_url`` / ``TRUSTGATE_URL`` only for a
-#: gateway of your own (a private data plane).
-DEFAULT_BASE_URL = "https://agentgateway.neuraltrust.ai"
+#: Hybrid gateway, to the MCP host its own data plane is published on.
+DEFAULT_BASE_URL = "https://agentgateway-mcp.neuraltrust.ai"
 
 
 @dataclass(frozen=True)

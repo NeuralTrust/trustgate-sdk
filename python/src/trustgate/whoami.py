@@ -14,6 +14,10 @@ from .config import API_KEY_HEADER, Config
 from .errors import PlaneUnavailableError, TrustGateError
 from .transport import Transport, error_for_response
 
+#: The code a plane answers with for a gateway it does not serve: a Hybrid one,
+#: which only its own data plane does.
+SERVED_ELSEWHERE = "gateway_served_by_external_data_plane"
+
 #: Who has to act before a server answers a call that runs as the application.
 #:
 #: ``administrator`` is an instance whose shared account nobody has connected -
@@ -93,7 +97,16 @@ def who_am_i(config: Config, transport: Transport) -> KeyIdentity:
             status=404,
         )
     if response.status >= 400:
-        raise error_for_response(response)
+        error = error_for_response(response)
+        if error.code == SERVED_ELSEWHERE:
+            raise TrustGateError(
+                f"this key's gateway runs on its own (Hybrid) data plane, which "
+                f"{config.base_url} does not serve. Set base_url (or TRUSTGATE_URL) to "
+                "the MCP host that data plane is published on.",
+                status=error.status,
+                code=error.code,
+            ) from error
+        raise error
     body = response.json() or {}
     key = body.get("key") or {}
     return KeyIdentity(

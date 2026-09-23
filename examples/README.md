@@ -37,12 +37,13 @@ the picture: a model call the gateway never sees.
 
 ## Where the values come from
 
-- `TRUSTGATE_URL` — your gateway's MCP base URL, with no application path. The
-  Connect tab of any application shows it. Against NeuralTrust's development
-  environment it is `https://agentgateway.dev.neuraltrust.ai`; the SDK itself
-  defaults to production, `https://agentgateway.neuraltrust.ai`.
 - `TRUSTGATE_API_KEY` — the application's own key, issued when the application
   is created and shown once; further keys are issued from its Auth tab.
+- `TRUSTGATE_URL` — optional. Unset, the SDK asks
+  `https://agentgateway-mcp.neuraltrust.ai`, which finds the gateway from the
+  key. Set it to `https://agentgateway-mcp.dev.neuraltrust.ai` for NeuralTrust's
+  development environment, or, for a Hybrid gateway, to the MCP host its own
+  data plane is published on: the NeuralTrust cloud does not serve that gateway.
 
 That is all the SDK needs: it asks the gateway which applications the key
 reaches, so no slug and no second URL travel into your configuration.
