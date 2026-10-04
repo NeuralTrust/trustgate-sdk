@@ -184,14 +184,19 @@ class EndUserAgent(_ToolSurface):
         """Which servers this user has connected, and which they have not."""
         return list_connections(self._config, self._http, self.slug, self.end_user)
 
-    def connect_link(self, provider: str | None = None) -> ConnectLink:
+    def connect_link(self, provider: str | None = None, instance: str | None = None) -> ConnectLink:
         """The page to put in front of this user so they can connect an account.
 
-        Naming a provider narrows it to that one server; omitting it covers
-        every server of the application that forwards a credential. The link
-        expires, so it is minted when it is about to be shown, not cached.
+        Naming a provider narrows it to that one server, and an instance (a
+        connection's ``instance``) to one of two instances of it; omitting both
+        covers every server of the application that forwards a credential. A
+        shared account is refused: it is not this user's to connect, which a
+        connection's ``shared`` says beforehand. The link expires, so it is
+        minted when it is about to be shown, not cached.
         """
-        return create_connect_link(self._config, self._http, self.slug, self.end_user, provider)
+        return create_connect_link(
+            self._config, self._http, self.slug, self.end_user, provider, instance
+        )
 
 
 def end_user_agent(

@@ -4,9 +4,12 @@ import pytest
 
 from trustgate import (
     Agent,
+    ConsentRequiredError,
     EndUserAgent,
     MissingToolsError,
     PlaneUnavailableError,
+    RateLimitedError,
+    ServiceUnavailableError,
     TrustGate,
     TrustGateError,
     UpstreamNotConnectedError,
@@ -373,3 +376,164 @@ def test_sends_an_end_users_connections_to_the_plane_too() -> None:
     agent.connections()
 
     assert gateway.requests[-1].url == "https://acme.mcp.test/acme/connections?end_user=user_1"
+
+
+# An agent written around Notion should not be stopped by a Linear it never
+# calls. The gateway lists only the servers that can answer, so a required tool
+# on the listing is one whose server has an account.
+def test_starts_when_only_servers_the_agent_does_not_need_are_blocked() -> None:
+    gateway = FakeGateway(
+        upstreams=[
+            {"server": "Linear", "account": "user", "connected": False, "blocked": "end_user"}
+        ]
+    )
+
+    agent = client(gateway).connect(requires=["notion_search"])
+
+    assert [tool.name for tool in agent.tools] == ["notion_search"]
+
+
+def test_still_refuses_when_a_required_tool_is_behind_a_blocked_server() -> None:
+    gateway = FakeGateway(
+        upstreams=[
+            {
+                "server": "Linear",
+                "account": "shared",
+                "connected": False,
+                "blocked": "administrator",
+            }
+        ]
+    )
+
+    with pytest.raises(UpstreamNotConnectedError) as caught:
+        client(gateway).connect(requires=["notion_search", "linear_create_issue"])
+
+    assert caught.value.servers == ["Linear"]
+
+
+def test_names_the_blocked_servers_when_the_listing_fails_over_them() -> None:
+    gateway = FakeGateway(
+        upstreams=[
+            {"server": "Linear", "account": "user", "connected": False, "blocked": "end_user"}
+        ],
+        list_error={
+            "code": -32003,
+            "message": "no account",
+            "data": {"reason": "application_not_connected", "registry": "Linear"},
+        },
+    )
+
+    with pytest.raises(UpstreamNotConnectedError) as caught:
+        client(gateway).connect(requires=["notion_search"])
+
+    assert caught.value.servers == ["Linear"]
+
+
+# The gateway answers a server nobody on this call can connect with the code of
+# a consent prompt but no link. Read as a consent prompt, it handed the user an
+# empty connect_url; it says who fixes it instead.
+def test_a_call_to_a_server_nobody_here_can_connect_names_who_does() -> None:
+    gateway = FakeGateway(
+        call_errors={
+            "notion_search": {
+                "code": -32003,
+                "message": 'mcp: "Linear" uses one shared account for every caller and nobody has connected it',
+                "data": {
+                    "reason": "application_not_connected",
+                    "provider": "linear",
+                    "registry": "Linear",
+                    "shared": True,
+                },
+            }
+        }
+    )
+    alice = client(gateway).connect().for_end_user("user_123")
+
+    with pytest.raises(UpstreamNotConnectedError) as caught:
+        alice.call_tool("notion_search")
+
+    assert caught.value.servers == ["Linear"]
+    assert caught.value.upstreams[0].blocked == "administrator"
+    assert "An administrator connects it" in str(caught.value)
+
+
+def test_a_bare_refusal_from_an_older_gateway_is_not_a_consent_prompt() -> None:
+    gateway = FakeGateway(
+        call_errors={
+            "notion_search": {
+                "code": -32003,
+                "message": 'mcp: "GitHub" keeps one account per user',
+            }
+        }
+    )
+
+    with pytest.raises(UpstreamNotConnectedError) as caught:
+        client(gateway).connect().call_tool("notion_search")
+
+    assert caught.value.servers == ["GitHub"]
+    assert 'tg.for_end_user("user_123")' in str(caught.value)
+
+
+def test_a_consent_prompt_still_carries_its_link() -> None:
+    gateway = FakeGateway(
+        call_errors={
+            "notion_search": {
+                "code": -32003,
+                "message": "user consent required",
+                "data": {"provider": "com.notion/mcp", "connect_url": "https://gw.test/c?t=1"},
+            }
+        }
+    )
+
+    with pytest.raises(ConsentRequiredError) as caught:
+        client(gateway).connect().for_end_user("user_123").call_tool("notion_search")
+
+    assert caught.value.connect_url == "https://gw.test/c?t=1"
+
+
+def test_throttling_and_an_unavailable_gateway_have_their_own_types() -> None:
+    gateway = FakeGateway(
+        call_errors={
+            "notion_search": {"code": -32004, "message": "rate limited"},
+            "notion_fetch": {"code": -32005, "message": "rate limiter unavailable"},
+        }
+    )
+    agent = client(gateway).connect()
+
+    with pytest.raises(RateLimitedError):
+        agent.call_tool("notion_search")
+    with pytest.raises(ServiceUnavailableError):
+        agent.call_tool("notion_fetch")
+
+
+# A shared account nobody connected reads not_connected like the user's own;
+# only `shared` says a connect link is not the remedy.
+def test_end_user_connections_say_which_accounts_are_shared() -> None:
+    gateway = FakeGateway(
+        connections=[
+            {"provider": "github", "status": "not_connected", "instance": "reg-1", "shared": False},
+            {"provider": "github", "status": "not_connected", "instance": "reg-2", "shared": True},
+        ]
+    )
+    alice = client(gateway).for_end_user("user_123")
+
+    own, team = alice.connections()
+    link = alice.connect_link(instance=own.instance)
+
+    assert (own.instance, own.shared) == ("reg-1", False)
+    assert (team.instance, team.shared) == ("reg-2", True)
+    assert gateway.requests[-1].body == {"end_user": "user_123", "instance": "reg-1"}
+    assert link.instance == "reg-1"
+
+
+def test_an_older_gateways_shared_account_is_the_administrators_to_fix() -> None:
+    gateway = FakeGateway(
+        connections=[
+            {"provider": "linear", "registry": "Linear", "status": "not_connected", "shared": True}
+        ]
+    )
+
+    with pytest.raises(UpstreamNotConnectedError) as caught:
+        client(gateway).connect()
+
+    assert caught.value.upstreams[0].blocked == "administrator"

@@ -18,6 +18,7 @@ export {
 	Actor,
 	ToolFormat,
 	type ConnectLink,
+	type ConnectTarget,
 	type Connection,
 	type Endpoint,
 	type GatewayTool,

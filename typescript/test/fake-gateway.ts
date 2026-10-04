@@ -20,7 +20,14 @@ export type FakeOptions = {
 	whoamiStatus?: number
 	/** The error code that status carries. Default `not_found`. */
 	whoamiError?: string
-	connections?: { provider: string; registry?: string; status: string; account_ref?: string }[]
+	connections?: {
+		provider: string
+		registry?: string
+		status: string
+		account_ref?: string
+		instance?: string
+		shared?: boolean
+	}[]
 	tools?: GatewayTool[]
 	/** Replies for tools/call, keyed by tool name. */
 	callResults?: Record<string, unknown>
@@ -79,6 +86,7 @@ export function fakeGateway(options: FakeOptions = {}) {
 				connect_url: 'https://gw.test/acme/mcp/connect?ticket=t-1',
 				ticket: 't-1',
 				provider: body?.provider,
+				...(body?.instance ? { instance: body.instance } : {}),
 				expires_at: '2026-01-01T00:15:00Z',
 			})
 		}

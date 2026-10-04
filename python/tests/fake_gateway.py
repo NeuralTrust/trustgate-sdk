@@ -102,6 +102,9 @@ class FakeGateway:
                     "connect_url": "https://gw.test/acme/mcp/connect?ticket=t-1",
                     "ticket": "t-1",
                     "provider": (decoded or {}).get("provider"),
+                    **(
+                        {"instance": decoded["instance"]} if (decoded or {}).get("instance") else {}
+                    ),
                     "expires_at": "2026-01-01T00:15:00Z",
                 },
             )

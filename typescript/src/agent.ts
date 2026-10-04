@@ -8,6 +8,7 @@ import {
 	ToolFormat,
 	resolveToolName,
 	type ConnectLink,
+	type ConnectTarget,
 	type Connection,
 	type Endpoint,
 	type GatewayTool,
@@ -242,12 +243,16 @@ export class EndUserAgent {
 	/**
 	 * The page to put in front of this user so they can connect an account.
 	 *
-	 * Naming a provider narrows it to that one server; omitting it covers every
-	 * server of the application that forwards a credential. The link expires,
-	 * so it is minted when it is about to be shown, not cached.
+	 * Naming a provider narrows it to that one server, and an instance (a
+	 * connection's `instance`) to one of two instances of it; omitting both
+	 * covers every server of the application that forwards a credential. A
+	 * shared account is refused: it is not this user's to connect, which a
+	 * connection's `shared` says beforehand. The link expires, so it is minted
+	 * when it is about to be shown, not cached.
 	 */
-	async connectLink(provider?: string, signal?: AbortSignal): Promise<ConnectLink> {
-		return createConnectLink(this.config, this.slug, this.endUser, provider, signal)
+	async connectLink(target?: string | ConnectTarget, signal?: AbortSignal): Promise<ConnectLink> {
+		const resolved = typeof target === 'string' ? { provider: target } : (target ?? {})
+		return createConnectLink(this.config, this.slug, this.endUser, resolved, signal)
 	}
 }
 

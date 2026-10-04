@@ -75,7 +75,7 @@ function errorForResponse(response: Response, body: ErrorBody | undefined, raw: 
 	return new TrustGateError(message, { status, code })
 }
 
-function retryAfterMs(response: Response): number | undefined {
+export function retryAfterMs(response: Response): number | undefined {
 	const header = response.headers.get('Retry-After')
 	if (!header) return undefined
 	const seconds = Number(header)

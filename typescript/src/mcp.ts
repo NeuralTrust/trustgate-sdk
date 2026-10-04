@@ -1,17 +1,24 @@
 import { API_KEY_HEADER, type ResolvedConfig } from './config.js'
 import {
 	AuthenticationError,
+	type BlockedUpstream,
 	ConsentRequiredError,
 	InvalidRequestError,
 	PolicyBlockedError,
+	RateLimitedError,
+	ServiceUnavailableError,
 	ToolNotFoundError,
 	TrustGateError,
 	TrustGateServerError,
+	UpstreamNotConnectedError,
 } from './errors.js'
+import { retryAfterMs } from './http.js'
 import type { GatewayTool, JSONSchema } from './types.js'
 
 /** JSON-RPC codes the gateway answers with, beyond the standard four. */
 const CODE_CONSENT_REQUIRED = -32003
+const CODE_RATE_LIMITED = -32004
+const CODE_UNAVAILABLE = -32005
 const CODE_RESOURCE_NOT_FOUND = -32002
 const CODE_POLICY_BLOCKED = -32001
 const CODE_INVALID_REQUEST = -32600
@@ -118,7 +125,7 @@ export class MCPTransport {
 				{ status: response.status }
 			)
 		}
-		if (rpc.error) throw errorForRPC(rpc.error)
+		if (rpc.error) throw errorForRPC(rpc.error, response)
 		return rpc.result ?? {}
 	}
 }
@@ -154,10 +161,16 @@ export function parseRPCResponse(text: string, id: number): RPCResponse | undefi
 	return undefined
 }
 
-function errorForRPC(error: RPCError): TrustGateError {
-	const data = (error.data ?? {}) as Record<string, unknown>
+/** The reason a -32003 carries when nobody on this call can connect the account. */
+const REASON_APPLICATION_NOT_CONNECTED = 'application_not_connected'
+
+function errorForRPC(error: RPCError, response?: Response): TrustGateError {
+	const data = (error.data && typeof error.data === 'object' ? error.data : {}) as Record<string, unknown>
 	switch (error.code) {
 		case CODE_CONSENT_REQUIRED:
+			if (notConnectableHere(data)) {
+				return new UpstreamNotConnectedError([upstreamFrom(data, error.message)])
+			}
 			return new ConsentRequiredError(
 				String(data.provider ?? 'this provider'),
 				String(data.connect_url ?? ''),
@@ -166,6 +179,10 @@ function errorForRPC(error: RPCError): TrustGateError {
 			)
 		case CODE_POLICY_BLOCKED:
 			return new PolicyBlockedError(error.message, { code: String(error.code) })
+		case CODE_RATE_LIMITED:
+			return new RateLimitedError(error.message, response ? retryAfterMs(response) : undefined)
+		case CODE_UNAVAILABLE:
+			return new ServiceUnavailableError(error.message, { code: String(error.code) })
 		case CODE_INTERNAL:
 			return new TrustGateServerError(error.message, { code: String(error.code) })
 		case CODE_INVALID_PARAMS:
@@ -174,6 +191,31 @@ function errorForRPC(error: RPCError): TrustGateError {
 			return new InvalidRequestError(error.message, { code: String(error.code) })
 		default:
 			return new TrustGateError(error.message, { code: String(error.code) })
+	}
+}
+
+/**
+ * Whether a -32003 names an account this call cannot connect.
+ *
+ * The gateway uses the code for both: a consent prompt, which carries the page
+ * to open, and a server whose account belongs to its instance or to a person
+ * the call did not name, which carries none. A gateway too old to send the
+ * reason still leaves the link out, and an empty link is never something to
+ * put in front of anyone.
+ */
+function notConnectableHere(data: Record<string, unknown>): boolean {
+	if (data.reason === REASON_APPLICATION_NOT_CONNECTED) return true
+	return !String(data.connect_url ?? '').trim()
+}
+
+/** The blocked server, as much of it as the error names. */
+function upstreamFrom(data: Record<string, unknown>, message: string): BlockedUpstream {
+	const provider = typeof data.provider === 'string' && data.provider ? data.provider : undefined
+	const registry = typeof data.registry === 'string' && data.registry ? data.registry : undefined
+	const quoted = /"([^"]+)"/.exec(message)?.[1]
+	return {
+		server: registry ?? provider ?? quoted ?? 'this server',
+		blocked: data.shared === true ? 'administrator' : 'end_user',
 	}
 }
 
