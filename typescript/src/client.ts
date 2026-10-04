@@ -2,6 +2,7 @@ import { Agent, EndUserAgent, endUserAgent } from './agent.js'
 import { API_KEY_HEADER, resolveConfig, type ResolvedConfig, type TrustGateConfig } from './config.js'
 import { listConnections } from './connections.js'
 import {
+	ConsentRequiredError,
 	MissingToolsError,
 	TrustGateError,
 	UpstreamNotConnectedError,
@@ -117,13 +118,28 @@ export class TrustGate {
 		const plane = onMCPPlane(this.config, consumer)
 		const connections = await listConnections(plane, consumer.slug, undefined, options.signal)
 		const blocked = blockedUpstreams(consumer.upstreams, connections)
-		if (blocked.length > 0) {
+		const required = options.requires ?? []
+		// Without requires, every server is one the agent may need, so any of
+		// them blocked fails the start. With them, only the agent's own: the
+		// gateway lists the servers that can answer and leaves the rest out, so a
+		// required tool on the listing is a tool whose server has an account.
+		if (blocked.length > 0 && required.length === 0) {
 			throw new UpstreamNotConnectedError(blocked)
 		}
 
 		const transport = new MCPTransport(plane, consumer.url)
-		const tools = await transport.listTools(options.signal)
-		const missing = missingTools(tools, options.requires ?? [])
+		let tools: GatewayTool[]
+		try {
+			tools = await transport.listTools(options.signal)
+		} catch (error) {
+			const accountMissing = error instanceof UpstreamNotConnectedError || error instanceof ConsentRequiredError
+			if (accountMissing && blocked.length > 0) throw new UpstreamNotConnectedError(blocked)
+			throw error
+		}
+		const missing = missingTools(tools, required)
+		if (missing.length > 0 && blocked.length > 0) {
+			throw new UpstreamNotConnectedError(blocked)
+		}
 		if (missing.length > 0) {
 			throw new MissingToolsError(missing, tools.map((tool) => tool.name))
 		}
@@ -231,5 +247,8 @@ function blockedUpstreams(upstreams: KeyUpstream[] | undefined, connections: Con
 	}
 	return connections
 		.filter((connection) => connection.status !== 'connected')
-		.map((connection) => ({ server: connection.registry || connection.provider }))
+		.map((connection) => ({
+			server: connection.registry || connection.provider,
+			blocked: connection.shared ? 'administrator' : 'end_user',
+		}))
 }

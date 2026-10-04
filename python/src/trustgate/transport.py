@@ -97,13 +97,13 @@ def error_for_response(response: Response) -> TrustGateError:
     if status in (401, 403):
         return AuthenticationError(message, status=status, code=code)
     if status == 429:
-        return RateLimitedError(message, _retry_after_ms(response))
+        return RateLimitedError(message, retry_after_ms(response))
     if status >= 500:
         return TrustGateServerError(message, status=status, code=code)
     return TrustGateError(message, status=status, code=code)
 
 
-def _retry_after_ms(response: Response) -> int | None:
+def retry_after_ms(response: Response) -> int | None:
     raw = response.headers.get("Retry-After")
     if not raw:
         return None

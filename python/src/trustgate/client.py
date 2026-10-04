@@ -7,11 +7,18 @@ from dataclasses import dataclass, replace
 from .agent import Agent, EndUserAgent, end_user_agent
 from .config import API_KEY_HEADER, Config, resolve_config
 from .connections import list_connections
-from .errors import MissingToolsError, UpstreamNotConnectedError
+from .errors import ConsentRequiredError, MissingToolsError, UpstreamNotConnectedError
 from .mcp import MCPTransport
 from .transport import Transport, UrllibTransport
 from .types import CONNECTED, Connection, GatewayTool, resolve_tool_name
-from .whoami import KeyIdentity, KeyUpstream, select_consumer, who_am_i
+from .whoami import (
+    BLOCKED_BY_ADMINISTRATOR,
+    BLOCKED_BY_END_USER,
+    KeyIdentity,
+    KeyUpstream,
+    select_consumer,
+    who_am_i,
+)
 
 
 @dataclass(frozen=True)
@@ -118,12 +125,24 @@ class TrustGate:
         plane = _on_mcp_plane(self._config, consumer.slug, consumer.url)
         connections = list_connections(plane, self._transport, consumer.slug)
         blocked = _blocked_upstreams(consumer.upstreams, connections)
-        if blocked:
+        required = list(requires or [])
+        # Without requires, every server is one the agent may need, so any of
+        # them blocked fails the start. With them, only the agent's own: the
+        # gateway lists the servers that can answer and leaves the rest out, so
+        # a required tool on the listing is a tool whose server has an account.
+        if blocked and not required:
             raise UpstreamNotConnectedError(blocked)
 
         transport = MCPTransport(plane, self._transport, consumer.url)
-        tools = transport.list_tools()
-        _check_requires(tools, list(requires or []))
+        try:
+            tools = transport.list_tools()
+        except (UpstreamNotConnectedError, ConsentRequiredError) as error:
+            if blocked:
+                raise UpstreamNotConnectedError(blocked) from error
+            raise
+        if blocked and _missing(tools, required):
+            raise UpstreamNotConnectedError(blocked)
+        _check_requires(tools, required)
 
         return Agent(plane, self._transport, consumer.slug, transport, tools, connections)
 
@@ -175,10 +194,14 @@ def _check_requires(tools: list[GatewayTool], requires: list[str]) -> None:
     the name its server gave the tool and leave the gateway's server prefix to
     the gateway.
     """
-    names = {tool.name for tool in tools}
-    missing = [name for name in requires if resolve_tool_name(name, tools) not in names]
+    missing = _missing(tools, requires)
     if missing:
-        raise MissingToolsError(missing, sorted(names))
+        raise MissingToolsError(missing, sorted(tool.name for tool in tools))
+
+
+def _missing(tools: list[GatewayTool], requires: list[str]) -> list[str]:
+    names = {tool.name for tool in tools}
+    return [name for name in requires if resolve_tool_name(name, tools) not in names]
 
 
 def _blocked_upstreams(
@@ -196,7 +219,12 @@ def _blocked_upstreams(
     if upstreams is not None:
         return [upstream for upstream in upstreams if upstream.blocked]
     return [
-        KeyUpstream(server=connection.registry or connection.provider)
+        KeyUpstream(
+            server=connection.registry or connection.provider,
+            provider=connection.provider,
+            account="shared" if connection.shared else "user",
+            blocked=BLOCKED_BY_ADMINISTRATOR if connection.shared else BLOCKED_BY_END_USER,
+        )
         for connection in connections
         if connection.status != CONNECTED
     ]

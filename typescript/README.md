@@ -54,6 +54,10 @@ await agent.refresh()                       // re-read the toolkit
 agent.connections                           // its own upstream accounts
 ```
 
+With `requires`, only the servers behind those tools have to be connected: a
+Linear nobody connected does not stop an agent that only calls Notion. Without
+it, every server is one the agent may call, so any of them blocks the start.
+
 The gateway serves a tool under the server it came from — Notion's `search` as
 `notion_search` — so two servers with a `search` stay apart. That prefix is the
 gateway's, so `requires` and `callTool` take the name the server itself gave the
@@ -71,6 +75,11 @@ await alice.connections()
 await alice.connectLink('com.notion/mcp')
 alice.toolkit(ToolFormat.AnthropicMessages)
 ```
+
+A connection with `shared: true` holds one account for every caller: its status
+is that account's, and no link of the user's fixes it, so an administrator
+connects it in the console. `connectLink({ instance: connection.instance })`
+names one of two instances of the same server.
 
 Both handles work on the same application and the same key: who a call runs as
 comes from the call, not from anything configured on the application. Each user
@@ -119,7 +128,7 @@ strict asked for are stripped unless the tool's own schema accepts them.
 | Class | When |
 |---|---|
 | `MissingToolsError` | `requires` names a tool the application does not serve |
-| `UpstreamNotConnectedError` | a server the application calls has no account behind it; `servers` names them and the message says who connects it |
+| `UpstreamNotConnectedError` | a server the call needs has no account behind it, at startup or on a call; `servers` names them and the message says who connects it — never a link |
 | `ConsentRequiredError` | an end user has not connected; carries `connectUrl` |
 | `PolicyBlockedError` | a gateway policy refused the call |
 | `ToolNotFoundError` | the tool left the toolkit under a running agent |

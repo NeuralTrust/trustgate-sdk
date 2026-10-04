@@ -40,10 +40,13 @@ def create_connect_link(
     slug: str,
     end_user: str,
     provider: str | None = None,
+    instance: str | None = None,
 ) -> ConnectLink:
     payload: dict[str, Any] = {"end_user": end_user}
     if provider:
         payload["provider"] = provider
+    if instance:
+        payload["instance"] = instance
     response = transport.request(
         "POST",
         f"{config.base_url}/{quote(slug)}/connections/links",
@@ -63,6 +66,7 @@ def create_connect_link(
         connect_url=body.get("connect_url", ""),
         ticket=body.get("ticket", ""),
         provider=body.get("provider") or None,
+        instance=body.get("instance") or None,
         expires_at=_to_datetime(body.get("expires_at")) or datetime.now(),
     )
 
@@ -88,6 +92,8 @@ def _to_connection(payload: dict[str, Any]) -> Connection:
         code=payload.get("code") or None,
         account_ref=payload.get("account_ref") or None,
         expires_at=_to_datetime(payload.get("expires_at")),
+        instance=payload.get("instance") or None,
+        shared=payload.get("shared") is True,
     )
 
 

@@ -55,6 +55,13 @@ class Connection:
     code: str | None = None
     account_ref: str | None = None
     expires_at: datetime | None = None
+    #: The registry id of the server's instance. Two instances of one provider
+    #: are two rows; pass this to ``connect_link`` to name one of them.
+    instance: str | None = None
+    #: True when the instance holds one account for every caller. Its status is
+    #: that account's, and no connect link fixes it: an administrator connects
+    #: it in the console.
+    shared: bool = False
 
 
 @dataclass(frozen=True)
@@ -65,6 +72,7 @@ class ConnectLink:
     ticket: str
     expires_at: datetime
     provider: str | None = None
+    instance: str | None = None
 
 
 @dataclass(frozen=True)

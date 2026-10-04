@@ -2,7 +2,14 @@ import { describe, expect, it } from 'vitest'
 
 import { TrustGate } from '../src/client.js'
 import { Agent, EndUserAgent } from '../src/agent.js'
-import { MissingToolsError, TrustGateError, UpstreamNotConnectedError } from '../src/errors.js'
+import {
+	ConsentRequiredError,
+	MissingToolsError,
+	RateLimitedError,
+	ServiceUnavailableError,
+	TrustGateError,
+	UpstreamNotConnectedError,
+} from '../src/errors.js'
 import { END_USER_HEADER } from '../src/config.js'
 import { fakeGateway } from './fake-gateway.js'
 
@@ -347,5 +354,148 @@ describe('starting from the key alone', () => {
 		await agent.connections()
 
 		expect(gateway.requests.at(-1)?.url).toBe('https://acme.mcp.test/acme/connections?end_user=user_1')
+	})
+})
+
+describe('accounts the caller cannot connect', () => {
+	// An agent written around Notion should not be stopped by a Linear it never
+	// calls. The gateway lists only the servers that can answer, so a required
+	// tool on the listing is one whose server has an account.
+	it('starts when only servers the agent does not need are blocked', async () => {
+		const gateway = fakeGateway({
+			upstreams: [{ server: 'Linear', account: 'user', connected: false, blocked: 'end_user' }],
+		})
+		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
+
+		const agent = await tg.connect({ requires: ['notion_search'] })
+
+		expect(agent.tools.map((t) => t.name)).toEqual(['notion_search'])
+	})
+
+	it('still refuses when a required tool is behind a blocked server', async () => {
+		const gateway = fakeGateway({
+			upstreams: [{ server: 'Linear', account: 'shared', connected: false, blocked: 'administrator' }],
+		})
+		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
+
+		const error = await tg.connect({ requires: ['notion_search', 'linear_create_issue'] }).catch((e) => e)
+
+		expect(error).toBeInstanceOf(UpstreamNotConnectedError)
+		expect(error.servers).toEqual(['Linear'])
+	})
+
+	it('names the blocked servers when the listing fails over them', async () => {
+		const gateway = fakeGateway({
+			upstreams: [{ server: 'Linear', account: 'user', connected: false, blocked: 'end_user' }],
+			listError: { code: -32003, message: 'no account', data: { reason: 'application_not_connected', registry: 'Linear' } },
+		})
+		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
+
+		const error = await tg.connect({ requires: ['notion_search'] }).catch((e) => e)
+
+		expect(error).toBeInstanceOf(UpstreamNotConnectedError)
+		expect(error.servers).toEqual(['Linear'])
+	})
+
+	// The gateway answers a server nobody on this call can connect with the code
+	// of a consent prompt but no link. Read as a consent prompt, it handed the
+	// user an empty connectUrl; it says who fixes it instead.
+	it('turns a call to a server nobody here can connect into who does', async () => {
+		const gateway = fakeGateway({
+			callErrors: {
+				notion_search: {
+					code: -32003,
+					message: 'mcp: "Linear" uses one shared account for every caller and nobody has connected it',
+					data: { reason: 'application_not_connected', provider: 'linear', registry: 'Linear', shared: true },
+				},
+			},
+		})
+		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
+		const alice = await tg.forEndUser('user_123')
+
+		const error = await alice.callTool('notion_search', {}).catch((e) => e)
+
+		expect(error).toBeInstanceOf(UpstreamNotConnectedError)
+		expect(error.upstreams).toEqual([{ server: 'Linear', blocked: 'administrator' }])
+		expect(String(error)).toContain('An administrator connects it')
+	})
+
+	it('does not read a bare refusal from an older gateway as a consent prompt', async () => {
+		const gateway = fakeGateway({
+			callErrors: { notion_search: { code: -32003, message: 'mcp: "GitHub" keeps one account per user' } },
+		})
+		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
+		const agent = await tg.connect()
+
+		const error = await agent.callTool('notion_search', {}).catch((e) => e)
+
+		expect(error).toBeInstanceOf(UpstreamNotConnectedError)
+		expect(error.servers).toEqual(['GitHub'])
+	})
+
+	it('keeps the link on a consent prompt', async () => {
+		const gateway = fakeGateway({
+			callErrors: {
+				notion_search: {
+					code: -32003,
+					message: 'user consent required',
+					data: { provider: 'com.notion/mcp', connect_url: 'https://gw.test/c?t=1' },
+				},
+			},
+		})
+		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
+		const alice = await tg.forEndUser('user_123')
+
+		const error = await alice.callTool('notion_search', {}).catch((e) => e)
+
+		expect(error).toBeInstanceOf(ConsentRequiredError)
+		expect(error.connectUrl).toBe('https://gw.test/c?t=1')
+	})
+
+	it('gives throttling and an unavailable gateway their own types', async () => {
+		const gateway = fakeGateway({
+			callErrors: {
+				notion_search: { code: -32004, message: 'rate limited' },
+				notion_fetch: { code: -32005, message: 'rate limiter unavailable' },
+			},
+		})
+		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
+		const agent = await tg.connect()
+
+		await expect(agent.callTool('notion_search', {})).rejects.toThrow(RateLimitedError)
+		await expect(agent.callTool('notion_fetch', {})).rejects.toThrow(ServiceUnavailableError)
+	})
+
+	// A shared account nobody connected reads not_connected like the user's own;
+	// only `shared` says a connect link is not the remedy.
+	it('says which of an end user\'s accounts are shared, and links one instance', async () => {
+		const gateway = fakeGateway({
+			connections: [
+				{ provider: 'github', status: 'not_connected', instance: 'reg-1', shared: false },
+				{ provider: 'github', status: 'not_connected', instance: 'reg-2', shared: true },
+			],
+		})
+		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
+		const alice = await tg.forEndUser('user_123')
+
+		const [own, team] = await alice.connections()
+		const link = await alice.connectLink({ instance: own.instance })
+
+		expect([own.instance, own.shared]).toEqual(['reg-1', false])
+		expect([team.instance, team.shared]).toEqual(['reg-2', true])
+		expect(gateway.requests.at(-1)?.body).toEqual({ end_user: 'user_123', instance: 'reg-1' })
+		expect(link.instance).toBe('reg-1')
+	})
+
+	it('treats an older gateway\'s shared account as the administrator\'s to fix', async () => {
+		const gateway = fakeGateway({
+			connections: [{ provider: 'linear', registry: 'Linear', status: 'not_connected', shared: true }],
+		})
+		const tg = new TrustGate({ ...base, fetch: gateway.fetch })
+
+		const error = await tg.connect().catch((e) => e)
+
+		expect(error).toBeInstanceOf(UpstreamNotConnectedError)
+		expect(error.upstreams[0].blocked).toBe('administrator')
 	})
 })

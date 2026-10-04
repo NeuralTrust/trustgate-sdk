@@ -2,7 +2,7 @@ import type { ResolvedConfig } from './config.js'
 import { END_USER_HEADER } from './config.js'
 import { requestJSON } from './http.js'
 import { InvalidRequestError } from './errors.js'
-import type { ConnectLink, Connection } from './types.js'
+import type { ConnectLink, ConnectTarget, Connection } from './types.js'
 
 type ConnectionPayload = {
 	provider: string
@@ -11,6 +11,8 @@ type ConnectionPayload = {
 	status: Connection['status']
 	account_ref?: string
 	expires_at?: string
+	instance?: string
+	shared?: boolean
 }
 
 type ConnectionsPayload = {
@@ -23,6 +25,7 @@ type LinkPayload = {
 	connect_url: string
 	ticket: string
 	provider?: string
+	instance?: string
 	expires_at: string
 }
 
@@ -47,19 +50,25 @@ export async function createConnectLink(
 	config: ResolvedConfig,
 	slug: string,
 	endUser: string,
-	provider: string | undefined,
+	target: ConnectTarget,
 	signal?: AbortSignal
 ): Promise<ConnectLink> {
+	const { provider, instance } = target
 	const { body } = await requestJSON<LinkPayload>(
 		config,
 		'POST',
 		`/${encodeURIComponent(slug)}/connections/links`,
-		{ body: { end_user: endUser, ...(provider ? { provider } : {}) }, headers: { [END_USER_HEADER]: endUser }, signal }
+		{
+			body: { end_user: endUser, ...(provider ? { provider } : {}), ...(instance ? { instance } : {}) },
+			headers: { [END_USER_HEADER]: endUser },
+			signal,
+		}
 	)
 	return {
 		connectUrl: body.connect_url,
 		ticket: body.ticket,
 		provider: body.provider || undefined,
+		instance: body.instance || undefined,
 		expiresAt: new Date(body.expires_at),
 	}
 }
@@ -72,6 +81,8 @@ function toConnection(payload: ConnectionPayload): Connection {
 		status: payload.status,
 		accountRef: payload.account_ref || undefined,
 		expiresAt: payload.expires_at ? new Date(payload.expires_at) : undefined,
+		instance: payload.instance || undefined,
+		shared: payload.shared === true,
 	}
 }
 

@@ -17,14 +17,20 @@ from .errors import (
     ConsentRequiredError,
     InvalidRequestError,
     PolicyBlockedError,
+    RateLimitedError,
+    ServiceUnavailableError,
     ToolNotFoundError,
     TrustGateError,
     TrustGateServerError,
+    UpstreamNotConnectedError,
 )
-from .transport import Transport
+from .transport import Response, Transport, retry_after_ms
 from .types import GatewayTool
+from .whoami import BLOCKED_BY_ADMINISTRATOR, BLOCKED_BY_END_USER, KeyUpstream
 
 CODE_CONSENT_REQUIRED = -32003
+CODE_RATE_LIMITED = -32004
+CODE_UNAVAILABLE = -32005
 CODE_RESOURCE_NOT_FOUND = -32002
 CODE_POLICY_BLOCKED = -32001
 CODE_INVALID_REQUEST = -32600
@@ -106,7 +112,7 @@ class MCPTransport:
                 status=response.status,
             )
         if "error" in rpc:
-            raise _error_for_rpc(rpc["error"])
+            raise _error_for_rpc(rpc["error"], response)
         return rpc.get("result") or {}
 
 
@@ -159,10 +165,18 @@ def _what_it_said(text: str) -> str:
     return f": {said[:200]}" if said else ""
 
 
-def _error_for_rpc(error: dict[str, Any]) -> TrustGateError:
+#: The reason a -32003 carries when nobody on this call can connect the account.
+REASON_APPLICATION_NOT_CONNECTED = "application_not_connected"
+
+
+def _error_for_rpc(error: dict[str, Any], response: Response | None = None) -> TrustGateError:
     code = error.get("code")
     message = str(error.get("message", ""))
     data = error.get("data") or {}
+    if not isinstance(data, dict):
+        data = {}
+    if code == CODE_CONSENT_REQUIRED and _not_connectable_here(data):
+        return UpstreamNotConnectedError([_upstream_from(data, message)])
     if code == CODE_CONSENT_REQUIRED:
         return ConsentRequiredError(
             str(data.get("provider", "this provider")),
@@ -172,8 +186,46 @@ def _error_for_rpc(error: dict[str, Any]) -> TrustGateError:
         )
     if code == CODE_POLICY_BLOCKED:
         return PolicyBlockedError(message, code=str(code))
+    if code == CODE_RATE_LIMITED:
+        return RateLimitedError(message, retry_after_ms(response) if response else None)
+    if code == CODE_UNAVAILABLE:
+        return ServiceUnavailableError(message, code=str(code))
     if code == CODE_INTERNAL:
         return TrustGateServerError(message, code=str(code))
     if code in (CODE_INVALID_PARAMS, CODE_INVALID_REQUEST, CODE_RESOURCE_NOT_FOUND):
         return InvalidRequestError(message, code=str(code))
     return TrustGateError(message, code=str(code))
+
+
+def _not_connectable_here(data: dict[str, Any]) -> bool:
+    """Whether a -32003 names an account this call cannot connect.
+
+    The gateway uses the code for both: a consent prompt, which carries the page
+    to open, and a server whose account belongs to its instance or to a person
+    the call did not name, which carries none. A gateway too old to send the
+    reason still leaves the link out, and an empty link is never something to
+    put in front of anyone.
+    """
+    if data.get("reason") == REASON_APPLICATION_NOT_CONNECTED:
+        return True
+    return not str(data.get("connect_url") or "").strip()
+
+
+def _upstream_from(data: dict[str, Any], message: str) -> KeyUpstream:
+    """The blocked server, as much of it as the error names."""
+    provider = str(data.get("provider") or "") or None
+    server = str(data.get("registry") or "") or provider or _server_in(message) or "this server"
+    shared = data.get("shared") is True
+    return KeyUpstream(
+        server=server,
+        provider=provider,
+        account="shared" if shared else "user",
+        blocked=BLOCKED_BY_ADMINISTRATOR if shared else BLOCKED_BY_END_USER,
+    )
+
+
+def _server_in(message: str) -> str | None:
+    """The server a message without data quotes first, as the gateway writes it."""
+    start = message.find('"')
+    end = message.find('"', start + 1) if start >= 0 else -1
+    return message[start + 1 : end] if end > start else None

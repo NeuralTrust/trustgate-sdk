@@ -44,16 +44,18 @@ export class MissingToolsError extends TrustGateError {
 /**
  * Servers the application cannot call yet, and who has to fix that.
  *
- * Raised at startup only, for the application handle: nobody is present to
- * follow a connect link once a batch is running, so the run either knows
- * beforehand or fails halfway through. The remedy is never the caller's — an
- * account a whole team rides on is an administrator's to connect, and a
- * per-caller account wants the person this call is for, which is what
+ * Raised at startup for the application handle: nobody is present to follow a
+ * connect link once a batch is running, so the run either knows beforehand or
+ * fails halfway through. It is also what a call raises when the gateway
+ * refuses it for the same reason — an account changed under a running agent,
+ * or a shared one an end user's call reached. The remedy is never a connect
+ * link — an account a whole team rides on is an administrator's to connect,
+ * and a per-caller account wants the person this call is for, which is what
  * `forEndUser` is.
  */
 export class UpstreamNotConnectedError extends TrustGateError {
 	constructor(readonly upstreams: BlockedUpstream[]) {
-		super(describeBlocked(upstreams))
+		super(describeBlocked(upstreams), { code: 'upstream_not_connected' })
 	}
 
 	/** The server names, for a caller that wants to log or list them. */

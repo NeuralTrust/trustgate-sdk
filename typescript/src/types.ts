@@ -47,6 +47,17 @@ export type Connection = {
 	status: 'connected' | 'needs_reconnect' | 'not_connected'
 	accountRef?: string
 	expiresAt?: Date
+	/**
+	 * The registry id of the server's instance. Two instances of one provider
+	 * are two rows; pass this to `connectLink` to name one of them.
+	 */
+	instance?: string
+	/**
+	 * True when the instance holds one account for every caller. Its status is
+	 * that account's, and no connect link fixes it: an administrator connects
+	 * it in the console.
+	 */
+	shared: boolean
 }
 
 /** The link an end user opens to connect their own account. */
@@ -54,8 +65,12 @@ export type ConnectLink = {
 	connectUrl: string
 	ticket: string
 	provider?: string
+	instance?: string
 	expiresAt: Date
 }
+
+/** What a connect link is for: one provider, one instance of it, or both. */
+export type ConnectTarget = { provider?: string; instance?: string }
 
 /** Everything a provider's client needs to reach the gateway. */
 export type Endpoint = {
