@@ -256,6 +256,101 @@ export class EndUserAgent {
 	}
 }
 
+/** The prefix of the tool the Store adds for each server still waiting on an account. */
+export const CONNECT_TOOL_PREFIX = 'trustgate_connect_'
+
+/** How long the link a connect tool mints stays valid, as the gateway sets it. */
+const CONNECT_TICKET_TTL_MS = 15 * 60_000
+
+/**
+ * A person's handle on their own Store.
+ *
+ * The servers are the ones they installed, narrowed to what Access grants
+ * them, and every call runs as them — their own upstream accounts, their own
+ * audit trail. A server whose account they have not connected yet is not on
+ * the surface: the Store puts a `trustgate_connect_<server>` tool in its place,
+ * which is what {@link needsConnect} and {@link connectLink} read.
+ */
+export class UserAgent {
+	readonly actor = Actor.User
+
+	constructor(
+		private readonly transport: MCPTransport,
+		/** The tools on this person's Store, as the gateway named them. */
+		public tools: GatewayTool[]
+	) {}
+
+	/**
+	 * URL and headers for a framework that brings its own MCP client.
+	 *
+	 * The bearer in it is a session token, valid for an hour: a framework that
+	 * keeps headers longer than that has to read this again.
+	 */
+	get mcp(): Endpoint {
+		return { url: this.transport.url, headers: this.transport.headers }
+	}
+
+	toolkit<Tool = unknown, Output = unknown>(
+		format: ToolFormat,
+		options: ToolkitOptions = {}
+	): Toolkit<Tool, Output> {
+		const { tools, warnings, originals } = adapterFor(format).convert(this.tools, {
+			strict: options.strict ?? false,
+		})
+		return new Toolkit<Tool, Output>(tools as Tool[], warnings, format, originals, this.transport)
+	}
+
+	/** One tool, called directly. The server prefix is optional, as on {@link Agent.callTool}. */
+	async callTool(
+		name: string,
+		args: Record<string, unknown> = {},
+		signal?: AbortSignal
+	): Promise<Record<string, unknown>> {
+		return this.transport.callTool(resolveToolName(name, this.tools), args, signal)
+	}
+
+	/** Re-reads the surface: after the person installs a server, or connects one. */
+	async refresh(signal?: AbortSignal): Promise<GatewayTool[]> {
+		this.tools = await this.transport.listTools(signal)
+		return this.tools
+	}
+
+	/** The servers waiting for this person to connect (or reconnect) an account. */
+	get needsConnect(): string[] {
+		return this.tools.filter(isConnectTool).map(connectLabel)
+	}
+
+	/**
+	 * The page where this person connects every account still missing.
+	 *
+	 * Undefined when nothing is. The link expires, so it is minted when it is
+	 * about to be shown; after the person connects, {@link refresh} brings the
+	 * server's tools onto the surface.
+	 */
+	async connectLink(signal?: AbortSignal): Promise<ConnectLink | undefined> {
+		const tool = this.tools.find(isConnectTool)
+		if (!tool) return undefined
+		const result = await this.transport.callTool(tool.name, {}, signal)
+		const structured = result.structuredContent as Record<string, unknown> | undefined
+		const connectUrl = typeof structured?.connect_url === 'string' ? structured.connect_url : ''
+		if (!connectUrl) return undefined
+		return {
+			connectUrl,
+			ticket: new URL(connectUrl).searchParams.get('ticket') ?? '',
+			expiresAt: new Date(Date.now() + CONNECT_TICKET_TTL_MS),
+		}
+	}
+}
+
+function isConnectTool(tool: GatewayTool): boolean {
+	return tool.name.startsWith(CONNECT_TOOL_PREFIX)
+}
+
+function connectLabel(tool: GatewayTool): string {
+	const title = tool.title?.trim() ?? ''
+	return title.startsWith('Connect ') ? title.slice('Connect '.length) : tool.name.slice(CONNECT_TOOL_PREFIX.length)
+}
+
 /** Builds the per-user handle, with the header that names them. */
 export function endUserAgent(
 	config: ResolvedConfig,

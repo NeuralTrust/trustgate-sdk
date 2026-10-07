@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 from .config import END_USER_HEADER, Config
 from .connections import create_connect_link, list_connections, require_end_user
@@ -197,6 +199,64 @@ class EndUserAgent(_ToolSurface):
         return create_connect_link(
             self._config, self._http, self.slug, self.end_user, provider, instance
         )
+
+
+#: The prefix of the tool the Store adds for each server still waiting on an account.
+CONNECT_TOOL_PREFIX = "trustgate_connect_"
+
+#: How long the link a connect tool mints stays valid, as the gateway sets it.
+_CONNECT_TICKET_TTL = timedelta(minutes=15)
+
+
+class UserAgent(_ToolSurface):
+    """A person's handle on their own Store.
+
+    The servers are the ones they installed, narrowed to what Access grants
+    them, and every call runs as them - their own upstream accounts, their own
+    audit trail. A server whose account they have not connected yet is not on
+    the surface: the Store puts a ``trustgate_connect_<server>`` tool in its
+    place, which is what :attr:`needs_connect` and :meth:`connect_link` read.
+    """
+
+    actor = Actor.USER
+
+    @property
+    def needs_connect(self) -> list[str]:
+        """The servers waiting for this person to connect (or reconnect) an account."""
+        return [_connect_label(tool) for tool in self.tools if _is_connect_tool(tool)]
+
+    def connect_link(self) -> ConnectLink | None:
+        """The page where this person connects every account still missing.
+
+        None when nothing is. The link expires, so it is minted when it is about
+        to be shown; after the person connects, :meth:`refresh` brings the
+        server's tools onto the surface.
+        """
+        tool = next((tool for tool in self.tools if _is_connect_tool(tool)), None)
+        if tool is None:
+            return None
+        result = self._transport.call_tool(tool.name, {})
+        structured = result.get("structuredContent")
+        url = str(structured.get("connect_url") or "") if isinstance(structured, dict) else ""
+        if not url:
+            return None
+        ticket = parse_qs(urlparse(url).query).get("ticket", [""])[0]
+        return ConnectLink(
+            connect_url=url,
+            ticket=ticket,
+            expires_at=datetime.now(timezone.utc) + _CONNECT_TICKET_TTL,
+        )
+
+
+def _is_connect_tool(tool: GatewayTool) -> bool:
+    return tool.name.startswith(CONNECT_TOOL_PREFIX)
+
+
+def _connect_label(tool: GatewayTool) -> str:
+    title = (tool.title or "").strip()
+    if title.startswith("Connect "):
+        return title[len("Connect ") :]
+    return tool.name[len(CONNECT_TOOL_PREFIX) :]
 
 
 def end_user_agent(

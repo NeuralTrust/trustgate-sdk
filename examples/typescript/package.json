@@ -11,7 +11,8 @@
     "whoami": "npm run build:sdk && node --experimental-strip-types --env-file-if-exists=.env whoami.ts",
     "openai": "npm run build:sdk && node --experimental-strip-types --env-file-if-exists=.env openai-responses.ts",
     "end-user": "npm run build:sdk && node --experimental-strip-types --env-file-if-exists=.env end-user-agent.ts",
-    "framework": "npm run build:sdk && node --experimental-strip-types --env-file-if-exists=.env framework-mcp.ts"
+    "framework": "npm run build:sdk && node --experimental-strip-types --env-file-if-exists=.env framework-mcp.ts",
+    "user": "npm run build:sdk && node --experimental-strip-types --env-file-if-exists=.env user-agent.ts"
   },
   "dependencies": {
     "@neuraltrust/trustgate": "file:../../typescript",

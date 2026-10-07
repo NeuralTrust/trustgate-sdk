@@ -89,6 +89,28 @@ connects, and the user travels in one.
 The name is yours to choose and the gateway namespaces it, so two applications
 naming `user_123` never reach the same account.
 
+## An agent for yourself, signed in
+
+No application and no API key: sign in through the browser and get your own
+Store — the servers you installed, narrowed to what Access grants you.
+
+```ts
+const user = await TrustGate.login({ url: 'https://acme.mcp.neuraltrust.ai/store/mcp' })
+const me = await user.connect()
+
+if (me.needsConnect.length) console.log('Connect:', (await me.connectLink())?.connectUrl)
+const { tools, execute } = me.toolkit(ToolFormat.OpenAIResponses)
+```
+
+The first run opens the browser; the session is kept in
+`~/.trustgate/sessions.json` (owner-only, the same file the Python SDK uses) and
+renewed until the sign-in ends, a day on NeuralTrust's cloud. Then
+`LoginRequiredError` says to sign in again. `cache: new MemoryTokenCache()`
+keeps nothing on disk, `force: true` signs in again regardless, and a backend
+that already holds a token uses `new TrustGateUser({ url, accessToken })`.
+Signing in through the browser needs Node; a token you hold works wherever
+`fetch` does.
+
 ## The provider's types
 
 ```ts
@@ -127,9 +149,10 @@ strict asked for are stripped unless the tool's own schema accepts them.
 
 | Class | When |
 |---|---|
-| `MissingToolsError` | `requires` names a tool the application does not serve |
+| `MissingToolsError` | `requires` names a tool the application (or your Store) does not serve |
 | `UpstreamNotConnectedError` | a server the call needs has no account behind it, at startup or on a call; `servers` names them and the message says who connects it — never a link |
 | `ConsentRequiredError` | an end user has not connected; carries `connectUrl` |
+| `LoginRequiredError` | a signed-in session has ended and cannot be renewed; call `TrustGate.login()` again |
 | `PolicyBlockedError` | a gateway policy refused the call |
 | `ToolNotFoundError` | the tool left the toolkit under a running agent |
 | `PlaneUnavailableError` | the key reaches no application on that plane |

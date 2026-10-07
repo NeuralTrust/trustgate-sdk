@@ -96,6 +96,25 @@ comes from the call, not from anything configured on the application. The name i
 yours to choose and the gateway namespaces it, so two applications naming
 `user_123` never reach the same account.
 
+## An agent for yourself, signed in
+
+No application and no API key: sign in through the browser and get your own
+Store - the servers you installed, narrowed to what Access grants you.
+
+```python
+me = TrustGate.login(url="https://acme.mcp.neuraltrust.ai/store/mcp").connect()
+
+if me.needs_connect:  # servers whose account you have not connected yet
+    print("Connect:", me.connect_link().connect_url)
+toolkit = me.toolkit(ToolFormat.ANTHROPIC_MESSAGES)
+```
+
+The first run opens the browser; the session is kept in `~/.trustgate/sessions.json`
+(owner-only) and renewed until the sign-in ends, a day on NeuralTrust's cloud.
+Then `LoginRequiredError` says to sign in again. `cache=MemoryTokenCache()`
+keeps nothing on disk, `force=True` signs in again regardless, and a backend
+that already holds a token uses `TrustGateUser(url, access_token=...)`.
+
 ## The model call, with tools
 
 ```python
@@ -129,9 +148,10 @@ tests use a fake one. It is also where a retry policy or a proxy belongs.
 
 | Class | When |
 |---|---|
-| `MissingToolsError` | `requires` names a tool the application does not serve |
+| `MissingToolsError` | `requires` names a tool the application (or your Store) does not serve |
 | `UpstreamNotConnectedError` | a server the call needs has no account behind it, at startup or on a call; `servers` names them and the message says who connects it - never a link |
 | `ConsentRequiredError` | an end user has not connected; carries `connect_url` |
+| `LoginRequiredError` | a signed-in session has ended and cannot be renewed; call `TrustGate.login()` again |
 | `PolicyBlockedError` | a gateway policy refused the call |
 | `ToolNotFoundError` | the tool left the toolkit under a running agent |
 | `PlaneUnavailableError` | the key reaches no application on that plane |

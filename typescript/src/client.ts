@@ -1,8 +1,9 @@
-import { Agent, EndUserAgent, endUserAgent } from './agent.js'
+import { Agent, EndUserAgent, UserAgent, endUserAgent } from './agent.js'
 import { API_KEY_HEADER, resolveConfig, type ResolvedConfig, type TrustGateConfig } from './config.js'
 import { listConnections } from './connections.js'
 import {
 	ConsentRequiredError,
+	LoginRequiredError,
 	MissingToolsError,
 	TrustGateError,
 	UpstreamNotConnectedError,
@@ -10,6 +11,16 @@ import {
 } from './errors.js'
 import { MCPTransport } from './mcp.js'
 import { resolveToolName, type Connection, type GatewayTool } from './types.js'
+import {
+	FileTokenCache,
+	UserSession,
+	expiresSoon,
+	loginFlow,
+	resolveStoreUrl,
+	type LoginFlowOptions,
+	type TokenCache,
+	type UserToken,
+} from './user.js'
 import { selectConsumer, whoAmI, type KeyIdentity, type KeyUpstream } from './whoami.js'
 
 export type ConnectOptions = {
@@ -146,6 +157,11 @@ export class TrustGate {
 		return new Agent(plane, consumer.slug, transport, tools, missing, connections)
 	}
 
+	/** Signs a person in to their own Store. See {@link TrustGateUser.login}. */
+	static login(options: LoginOptions = {}): Promise<TrustGateUser> {
+		return TrustGateUser.login(options)
+	}
+
 	/**
 	 * The handle for one named person, on the same consumer and the same key.
 	 *
@@ -166,6 +182,151 @@ export class TrustGate {
 		}
 		return agent
 	}
+}
+
+export type TrustGateUserConfig = {
+	/**
+	 * The Store's MCP endpoint, `https://<gateway>.<mcp host>/store/mcp`, or
+	 * its host. Defaults to `TRUSTGATE_STORE_URL`.
+	 */
+	url?: string
+	/**
+	 * A session token your own sign-in already holds — a backend that ran the
+	 * OAuth flow for its user. Defaults to `TRUSTGATE_ACCESS_TOKEN`.
+	 */
+	accessToken?: string
+	/** A session with its refresh token, as {@link TrustGateUser.login} keeps it. */
+	token?: UserToken
+	/** Where a renewed session is written back. */
+	cache?: TokenCache
+	/** Overrides the fetch implementation. Tests and proxies use this. */
+	fetch?: typeof globalThis.fetch
+	/** Per-request timeout in milliseconds. Default 30000. */
+	timeoutMs?: number
+}
+
+export type LoginOptions = LoginFlowOptions & {
+	/** The Store URL, as in {@link TrustGateUserConfig.url}. */
+	url?: string
+	/**
+	 * Where the session is kept between runs. Default: a file in `~/.trustgate`
+	 * only this user can read. Pass a `MemoryTokenCache` to keep nothing on disk.
+	 */
+	cache?: TokenCache
+	/** Signs in through the browser even when a session is kept. */
+	force?: boolean
+	fetch?: typeof globalThis.fetch
+	timeoutMs?: number
+}
+
+/**
+ * A person, signed in, on their own Store.
+ *
+ * The other side of {@link TrustGate}: no API key and no application, but a
+ * person with what Access grants them — the servers they installed from the
+ * Store, narrowed to what their user and groups may reach, called with their
+ * own accounts. Use {@link login} to sign in through the browser, or pass an
+ * `accessToken` your own sign-in already holds.
+ */
+export class TrustGateUser {
+	/** The Store's MCP endpoint, `https://<gateway>.<mcp host>/store/mcp`. */
+	readonly url: string
+	readonly session: UserSession
+	private readonly fetchImpl: typeof globalThis.fetch
+	private readonly timeoutMs: number
+	private readonly cache?: TokenCache
+
+	constructor(config: TrustGateUserConfig = {}) {
+		this.url = resolveStoreUrl(config.url)
+		this.fetchImpl = config.fetch ?? globalThis.fetch
+		this.timeoutMs = config.timeoutMs ?? 30_000
+		this.cache = config.cache
+		let token = config.token
+		if (!token) {
+			const raw = (config.accessToken ?? fromEnv('TRUSTGATE_ACCESS_TOKEN') ?? '').trim()
+			if (!raw) {
+				throw new TrustGateError(
+					'accessToken is required (or set TRUSTGATE_ACCESS_TOKEN); to sign in through ' +
+						`the browser use TrustGate.login({ url: "${this.url}" })`
+				)
+			}
+			token = { accessToken: raw, expiresAt: 0 }
+		}
+		this.session = new UserSession(this.url, token, { fetch: this.fetchImpl, timeoutMs: this.timeoutMs }, this.cache)
+	}
+
+	/**
+	 * Signs in through the browser, or reuses the session from last time.
+	 *
+	 * The session is kept in `cache` — by default a file in `~/.trustgate` only
+	 * this user can read — so a script signs in once and runs again without a
+	 * browser until the sign-in ends (a day, on NeuralTrust's cloud).
+	 *
+	 * The browser comes back to a port on this machine, so this is for the
+	 * person's own computer, on Node. A server acting for many people is an
+	 * application, with an API key: see {@link TrustGate}.
+	 */
+	static async login(options: LoginOptions = {}): Promise<TrustGateUser> {
+		const url = resolveStoreUrl(options.url)
+		const http = { fetch: options.fetch ?? globalThis.fetch, timeoutMs: options.timeoutMs ?? 30_000 }
+		const cache = options.cache ?? new FileTokenCache()
+		const make = (token: UserToken) =>
+			new TrustGateUser({ url, token, cache, fetch: http.fetch, timeoutMs: http.timeoutMs })
+		if (!options.force) {
+			const cached = await cache.load(url)
+			if (cached) {
+				const session = new UserSession(url, cached, http, cache)
+				try {
+					if (expiresSoon(cached, Date.now()) && !(await session.renew())) {
+						throw new LoginRequiredError(url)
+					}
+					return make(session.token)
+				} catch (error) {
+					if (!(error instanceof LoginRequiredError)) throw error
+				}
+			}
+		}
+		const token = await loginFlow(url, http, options)
+		await cache.save(url, token)
+		return make(token)
+	}
+
+	/** Forgets the session kept for this Store. The browser's sign-in stays. */
+	async logout(): Promise<void> {
+		await this.cache?.clear(this.url)
+	}
+
+	/**
+	 * Opens this person's Store and checks the tools the agent needs are on it.
+	 *
+	 * A server whose account the person has not connected yet is not on the
+	 * surface; {@link UserAgent.needsConnect} names those and
+	 * {@link UserAgent.connectLink} is the page to connect them.
+	 */
+	async connect(options: ConnectOptions = {}): Promise<UserAgent> {
+		const config: ResolvedConfig = {
+			baseUrl: new URL(this.url).origin,
+			apiKey: '',
+			fetch: this.fetchImpl,
+			timeoutMs: this.timeoutMs,
+		}
+		const transport = new MCPTransport(config, this.url, {}, this.session)
+		const tools = await transport.listTools(options.signal)
+		const missing = missingTools(tools, options.requires ?? [])
+		if (missing.length > 0) {
+			throw new MissingToolsError(
+				missing,
+				tools.map((tool) => tool.name),
+				'Install them from the Store, or ask an admin to grant them in Access.'
+			)
+		}
+		return new UserAgent(transport, tools)
+	}
+}
+
+function fromEnv(name: string): string | undefined {
+	const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env
+	return env?.[name]
 }
 
 /**

@@ -147,12 +147,36 @@ applications naming `user_123` never reach the same account — which is also wh
 only an application's own credential may assert one: a request carrying a
 person's own token is already that person.
 
+## A person, signed in, on their own Store
+
+Not everything is an application. A person can run an agent as themselves:
+they sign in through the browser, the way their MCP client does, and get their
+own Store — the servers they installed, narrowed to what Access grants their
+user and groups, called with their own accounts. No API key is involved.
+
+```ts
+const me = await (await TrustGate.login({ url: 'https://acme.mcp.neuraltrust.ai/store/mcp' })).connect()
+
+if (me.needsConnect.length) console.log('Connect:', (await me.connectLink())?.connectUrl)
+const { tools, execute } = me.toolkit(ToolFormat.OpenAIResponses)
+```
+
+The first run opens the browser; the session is kept in `~/.trustgate`, readable
+only by you, and renewed until the sign-in ends — a day on NeuralTrust's cloud,
+so that what an admin changes in Access reaches you by then. Past that,
+`LoginRequiredError` says to sign in again. A backend that already ran the OAuth
+flow for its user passes the token instead: `new TrustGateUser({ url, accessToken })`.
+
+The browser comes back to a port on your machine, so this is for your own
+computer. A service acting for many people is an application with an API key,
+naming its users as above.
+
 ## Running something
 
 [`examples/`](examples) holds programs that run as they are: an end-user
-assistant and a framework using its own MCP client in both languages, a batch
-job in Python, a direct OpenAI Responses loop in TypeScript, and `whoami` in
-both. Each project builds the SDK from this repository and takes its gateway and
+assistant, a framework using its own MCP client and a signed-in user's own
+assistant in both languages, a batch job in Python, a direct OpenAI Responses
+loop in TypeScript, and `whoami` in both. Each project builds the SDK from this repository and takes its gateway and
 key from a `.env` you copy from the `.env.example` beside it:
 
 ```sh

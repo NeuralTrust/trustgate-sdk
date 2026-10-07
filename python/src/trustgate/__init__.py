@@ -7,13 +7,14 @@ agent was written around are still on its toolkit, and what to do when an
 upstream account is not connected.
 """
 
-from .agent import Agent, EndUserAgent, Toolkit
-from .client import LLMEndpoint, TrustGate
+from .agent import Agent, EndUserAgent, Toolkit, UserAgent
+from .client import LLMEndpoint, TrustGate, TrustGateUser
 from .config import API_KEY_HEADER, END_USER_HEADER
 from .errors import (
     AuthenticationError,
     ConsentRequiredError,
     InvalidRequestError,
+    LoginRequiredError,
     MissingToolsError,
     PlaneUnavailableError,
     PolicyBlockedError,
@@ -37,6 +38,7 @@ from .types import (
     ToolCall,
     ToolFormat,
 )
+from .user import FileTokenCache, MemoryTokenCache, TokenCache, UserToken
 from .whoami import (
     KeyConsumer,
     KeyIdentity,
@@ -59,6 +61,7 @@ __all__ = [
     "ConversionWarning",
     "END_USER_HEADER",
     "Endpoint",
+    "FileTokenCache",
     "EndUserAgent",
     "GatewayTool",
     "KeyConsumer",
@@ -67,7 +70,9 @@ __all__ = [
     "KeyUpstream",
     "InvalidRequestError",
     "LLMEndpoint",
+    "LoginRequiredError",
     "MCPTransport",
+    "MemoryTokenCache",
     "MissingToolsError",
     "PlaneUnavailableError",
     "PolicyBlockedError",
@@ -76,6 +81,7 @@ __all__ = [
     "ServiceUnavailableError",
     "StrictResult",
     "ToolCall",
+    "TokenCache",
     "ToolFormat",
     "ToolNotFoundError",
     "Toolkit",
@@ -83,8 +89,11 @@ __all__ = [
     "TrustGate",
     "TrustGateError",
     "TrustGateServerError",
+    "TrustGateUser",
     "UpstreamNotConnectedError",
+    "UserAgent",
     "UrllibTransport",
+    "UserToken",
     "adapter_for",
     "inline_refs",
     "result_to_text",

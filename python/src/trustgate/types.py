@@ -17,6 +17,8 @@ class Actor(str, Enum):
 
     APPLICATION = "application"
     END_USER = "end_user"
+    #: A person signed in on their own Store, with what Access grants them.
+    USER = "user"
 
 
 class ToolFormat(str, Enum):

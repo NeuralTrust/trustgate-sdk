@@ -2,7 +2,8 @@
 
 Runnable programs in both languages. Each one is a shape you actually build,
 not a fragment: the application acting as itself, the application acting for
-its own end users, and a framework that brings its own MCP client.
+its own end users, a framework that brings its own MCP client, and a person
+signed in on their own Store.
 
 Nothing here is checked in with a credential. Every example reads the same two
 values — your gateway and one API key — from a `.env` you copy from the
@@ -17,6 +18,7 @@ values — your gateway and one API key — from a `.env` you copy from the
 | `typescript/openai-responses.ts` | Tools translated for the Responses API and run back through the gateway — no MCP client in sight |
 | `typescript/end-user-agent.ts` | The same shape as `end_user_agent.py`, against the Responses API |
 | `typescript/framework-mcp.ts` | The same application handed to a framework that brings its own MCP client |
+| `python/user_agent.py`, `typescript/user-agent.ts` | No application at all: you sign in through the browser and get your own Store — the servers you installed, narrowed to what Access grants you |
 
 There are two ways to use an application's tools, and both are here in both
 languages.
@@ -48,6 +50,14 @@ the picture: a model call the gateway never sees.
 That is all the SDK needs: it asks the gateway which applications the key
 reaches, so no slug and no second URL travel into your configuration.
 
+The user examples take neither. They need:
+
+- `TRUSTGATE_STORE_URL` — your Store's MCP URL,
+  `https://<gateway>.<mcp host>/store/mcp`, as the console shows it where the
+  Store is added to an MCP client. The first run opens your browser to sign in;
+  the session is kept in `~/.trustgate` and reused until the sign-in ends (a
+  day), so later runs do not.
+
 ## Running them
 
 Both projects take the SDK from this repository rather than from a registry,
@@ -64,6 +74,7 @@ uv run whoami.py
 uv run batch.py
 uv run end_user_agent.py user_123 "what changed in the runbook this week?"
 uv run framework_mcp.py
+uv run user_agent.py "what changed in the runbook this week?"
 ```
 
 An application acting as itself is `batch.py`; one naming its own users is
@@ -82,6 +93,7 @@ npm run whoami
 npm run openai
 npm run end-user -- user_123 "what changed in the runbook this week?"
 npm run framework
+npm run user -- "what changed in the runbook this week?"
 ```
 
 Both projects build the SDK from this repository rather than from a registry,

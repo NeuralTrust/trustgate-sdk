@@ -25,6 +25,19 @@ const CODE_INVALID_REQUEST = -32600
 const CODE_INVALID_PARAMS = -32602
 const CODE_INTERNAL = -32603
 
+/**
+ * How a caller other than an API key authenticates: a signed-in person.
+ *
+ * `headers` is awaited on every call so a token can be renewed under a running
+ * agent; `renew` is asked once after the gateway refuses one, and says whether
+ * there is anything to retry with.
+ */
+export interface Credentials {
+	headers(): Promise<Record<string, string>>
+	headersNow(): Record<string, string>
+	renew(): Promise<boolean>
+}
+
 type RPCError = { code: number; message: string; data?: unknown }
 type RPCResponse = { id?: unknown; result?: Record<string, unknown>; error?: RPCError }
 
@@ -42,10 +55,12 @@ export class MCPTransport {
 	constructor(
 		private readonly config: ResolvedConfig,
 		readonly url: string,
-		private readonly extraHeaders: Record<string, string> = {}
+		private readonly extraHeaders: Record<string, string> = {},
+		private readonly credentials?: Credentials
 	) {}
 
 	get headers(): Record<string, string> {
+		if (this.credentials) return { ...this.credentials.headersNow(), ...this.extraHeaders }
 		return { [API_KEY_HEADER]: this.config.apiKey, ...this.extraHeaders }
 	}
 
@@ -88,31 +103,18 @@ export class MCPTransport {
 		signal?: AbortSignal
 	): Promise<Record<string, unknown>> {
 		const id = this.nextId++
-		const controller = new AbortController()
-		const timeout = setTimeout(() => controller.abort(), this.config.timeoutMs)
-		let response: Response
-		try {
-			response = await this.config.fetch(this.url, {
-				method: 'POST',
-				headers: {
-					...this.headers,
-					'Content-Type': 'application/json',
-					// A plain JSON answer is enough: the SDK re-lists on demand
-					// rather than listening for a change on the response.
-					Accept: 'application/json',
-				},
-				body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
-				signal: signal ?? controller.signal,
-			})
-		} catch (cause) {
-			throw new TrustGateError(`MCP ${method} failed to reach ${this.url}`, { cause })
-		} finally {
-			clearTimeout(timeout)
+		const body = JSON.stringify({ jsonrpc: '2.0', id, method, params })
+		let response = await this.post(method, body, signal)
+		// A session token can be refused before its own expiry says so (the
+		// clock here is not the gateway's); one renewal, one retry.
+		if (response.status === 401 && this.credentials && (await this.credentials.renew())) {
+			response = await this.post(method, body, signal)
 		}
 
 		if (response.status === 401 || response.status === 403) {
+			const refused = this.credentials ? 'this sign-in' : 'this API key'
 			throw new AuthenticationError(
-				`the gateway refused this API key for ${this.url}`,
+				`the gateway refused ${refused} for ${this.url}${whatItSaid(await response.text())}`,
 				{ status: response.status }
 			)
 		}
@@ -127,6 +129,32 @@ export class MCPTransport {
 		}
 		if (rpc.error) throw errorForRPC(rpc.error, response)
 		return rpc.result ?? {}
+	}
+
+	private async post(method: string, body: string, signal?: AbortSignal): Promise<Response> {
+		const auth = this.credentials
+			? { ...(await this.credentials.headers()), ...this.extraHeaders }
+			: this.headers
+		const controller = new AbortController()
+		const timeout = setTimeout(() => controller.abort(), this.config.timeoutMs)
+		try {
+			return await this.config.fetch(this.url, {
+				method: 'POST',
+				headers: {
+					...auth,
+					'Content-Type': 'application/json',
+					// A plain JSON answer is enough: the SDK re-lists on demand
+					// rather than listening for a change on the response.
+					Accept: 'application/json',
+				},
+				body,
+				signal: signal ?? controller.signal,
+			})
+		} catch (cause) {
+			throw new TrustGateError(`MCP ${method} failed to reach ${this.url}`, { cause })
+		} finally {
+			clearTimeout(timeout)
+		}
 	}
 }
 

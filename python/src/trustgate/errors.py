@@ -16,6 +16,7 @@ if TYPE_CHECKING:  # pragma: no cover - import cycle, types only
 __all__ = [
     "TrustGateError",
     "AuthenticationError",
+    "LoginRequiredError",
     "InvalidRequestError",
     "MissingToolsError",
     "UpstreamNotConnectedError",
@@ -47,6 +48,24 @@ class AuthenticationError(TrustGateError):
     """The API key is wrong, or it does not belong to this consumer."""
 
 
+class LoginRequiredError(AuthenticationError):
+    """A person's sign-in ended and cannot be renewed: sign in again.
+
+    A NeuralTrust sign-in lasts a day by design, so that what an admin changes
+    in Access reaches the person by then. The remedy is the browser, not code,
+    which is why it is its own type: a script catches it and calls ``login()``.
+    """
+
+    def __init__(self, url: str, reason: str | None = None) -> None:
+        detail = f" ({reason})" if reason else ""
+        super().__init__(
+            f'the sign-in for {url} has ended{detail}. Sign in again: TrustGate.login(url="{url}")',
+            status=401,
+            code="login_required",
+        )
+        self.url = url
+
+
 class InvalidRequestError(TrustGateError):
     """The request was malformed - a bad end-user id, an unknown provider."""
 
@@ -59,11 +78,16 @@ class MissingToolsError(TrustGateError):
     only to find the tool it was written around is not there.
     """
 
-    def __init__(self, missing: list[str], available: list[str]) -> None:
+    def __init__(
+        self,
+        missing: list[str],
+        available: list[str],
+        remedy: str = "Ask the admin who owns this application to add them.",
+    ) -> None:
         offered = ", ".join(available) if available else "(nothing)"
         super().__init__(
             f"the consumer's toolkit is missing {', '.join(repr(t) for t in missing)}. "
-            f"It offers: {offered}. Ask the admin who owns this application to add them."
+            f"It offers: {offered}. {remedy}"
         )
         self.missing = missing
         self.available = available
