@@ -1,15 +1,16 @@
 /**
  * An assistant for yourself, on your own Store.
  *
- * No application and no API key: you sign in as yourself, and the tools are the
- * servers you installed from the Store, narrowed to what Access grants you. The
- * first run opens your browser; later runs reuse the session until it ends.
+ * No application: you run as yourself, and the tools are the servers you
+ * installed from the Store, narrowed to what Access grants you. With your
+ * personal key (TRUSTGATE_PERSONAL_KEY) your models go through the gateway too;
+ * without it, the first run opens your browser to sign in.
  *
  *     npm run user
  *     npm run user -- "what changed in the runbook this week?"
  */
 import OpenAI from 'openai'
-import { ConsentRequiredError, ToolFormat, TrustGate } from '@neuraltrust/trustgate'
+import { ConsentRequiredError, ToolFormat, TrustGate, TrustGateUser } from '@neuraltrust/trustgate'
 
 import { fail, require } from './config.ts'
 
@@ -21,17 +22,20 @@ const MAX_TURNS = 6
 
 const [question = DEFAULT_QUESTION] = process.argv.slice(2)
 
-const url = require(
-	'TRUSTGATE_STORE_URL',
-	"It is your Store's MCP URL, https://<gateway>.<mcp host>/store/mcp — the console shows it where the Store is added to an MCP client."
-)
-require('OPENAI_API_KEY', 'This example calls OpenAI directly; the key is yours, not the gateway’s.')
-
-// The browser opens on the first run only: the session is kept in ~/.trustgate
-// and renewed, until the sign-in itself ends.
-const me = await TrustGate.login({ url })
-	.then((user) => user.connect())
-	.catch(fail)
+// Your personal key (the Portal's Personal key) says which gateway and which
+// Store, and reaches your models too. Without it, the browser signs you in to
+// TRUSTGATE_STORE_URL on the first run (the session is kept in ~/.trustgate),
+// and the models take your own OpenAI key.
+const personal = !!process.env.TRUSTGATE_PERSONAL_KEY?.trim()
+const user = personal
+	? new TrustGateUser()
+	: await TrustGate.login({
+			url: require(
+				'TRUSTGATE_STORE_URL',
+				"Set TRUSTGATE_PERSONAL_KEY to your personal key (the Portal's Personal key), or this to your Store's MCP URL, https://<gateway>.<mcp host>/store/mcp, to sign in through the browser."
+			),
+		}).catch(fail)
+const me = await user.connect().catch(fail)
 
 // A server whose account you have not connected is not on the surface yet; one
 // link connects all of them, and the next run picks them up.
@@ -41,7 +45,12 @@ if (me.needsConnect.length > 0) {
 	if (link) console.log(`Connect them here, then run this again: ${link.connectUrl}\n`)
 }
 
-const openai = new OpenAI()
+const openai = personal
+	? await user
+			.llm()
+			.then((llm) => new OpenAI({ baseURL: llm.baseUrl, apiKey: llm.apiKey }))
+			.catch(fail)
+	: new OpenAI({ apiKey: require('OPENAI_API_KEY', 'Signed in, this example calls OpenAI directly; the key is yours, not the gateway’s.') })
 const { tools, execute } = me.toolkit<OpenAI.Responses.Tool, OpenAI.Responses.ResponseInputItem>(
 	ToolFormat.OpenAIResponses
 )

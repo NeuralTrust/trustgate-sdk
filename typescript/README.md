@@ -91,10 +91,21 @@ connects, and the user travels in one.
 The name is yours to choose and the gateway namespaces it, so two applications
 naming `user_123` never reach the same account.
 
-## An agent for yourself, signed in
+## An agent for yourself
 
-No application and no API key: sign in through the browser and get your own
-Store — the servers you installed, narrowed to what Access grants you.
+No application: your own Store — the servers you installed, narrowed to what
+Access grants you — and your models, with your **personal key** from the Portal
+(Personal key):
+
+```ts
+const me = new TrustGateUser({ apiKey: process.env.TRUSTGATE_PERSONAL_KEY })
+const { tools, execute } = (await me.connect()).toolkit(ToolFormat.OpenAIResponses) // your MCP tools
+const llm = await me.llm() // your models: new OpenAI({ baseURL: llm.baseUrl, apiKey: llm.apiKey })
+```
+
+`new TrustGate({ apiKey })` is an application's, and refuses a personal key with
+a pointer here. Or sign in through the browser instead — tools only, the models
+take the key:
 
 ```ts
 const user = await TrustGate.login({ url: 'https://acme.mcp.neuraltrust.ai/store/mcp' })
