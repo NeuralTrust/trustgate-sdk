@@ -21,6 +21,26 @@ export class TrustGateError extends Error {
 /** The API key is wrong, or it does not belong to this consumer. */
 export class AuthenticationError extends TrustGateError {}
 
+/**
+ * A person's sign-in ended and cannot be renewed: sign in again.
+ *
+ * A NeuralTrust sign-in lasts a day by design, so that what an admin changes in
+ * Access reaches the person by then. The remedy is the browser, not code, which
+ * is why it is its own type: a script catches it and calls `login()`.
+ */
+export class LoginRequiredError extends AuthenticationError {
+	constructor(
+		readonly url: string,
+		reason?: string
+	) {
+		super(
+			`the sign-in for ${url} has ended${reason ? ` (${reason})` : ''}. Sign in again: ` +
+				`TrustGate.login({ url: "${url}" })`,
+			{ status: 401, code: 'login_required' }
+		)
+	}
+}
+
 /** The request was malformed — a bad end-user id, an unknown provider. */
 export class InvalidRequestError extends TrustGateError {}
 
@@ -32,11 +52,15 @@ export class InvalidRequestError extends TrustGateError {}
  * only to find the tool it was written around is not there.
  */
 export class MissingToolsError extends TrustGateError {
-	constructor(readonly missing: string[], readonly available: string[]) {
+	constructor(
+		readonly missing: string[],
+		readonly available: string[],
+		remedy = 'Ask the admin who owns this application to add them.'
+	) {
 		super(
 			`the consumer's toolkit is missing ${missing.map((t) => `"${t}"`).join(', ')}. ` +
 				`It offers: ${available.length ? available.join(', ') : '(nothing)'}. ` +
-				'Ask the admin who owns this application to add them.'
+				remedy
 		)
 	}
 }

@@ -5,6 +5,8 @@ export const Actor = {
 	Application: 'application',
 	/** One of the application's own end users. */
 	EndUser: 'end_user',
+	/** A person signed in on their own Store, with what Access grants them. */
+	User: 'user',
 } as const
 export type Actor = (typeof Actor)[keyof typeof Actor]
 

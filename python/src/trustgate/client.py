@@ -2,15 +2,33 @@
 
 from __future__ import annotations
 
+import os
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, replace
+from urllib.parse import urlparse
 
-from .agent import Agent, EndUserAgent, end_user_agent
+from .agent import Agent, EndUserAgent, UserAgent, end_user_agent
 from .config import API_KEY_HEADER, Config, resolve_config
 from .connections import list_connections
-from .errors import ConsentRequiredError, MissingToolsError, UpstreamNotConnectedError
+from .errors import (
+    ConsentRequiredError,
+    LoginRequiredError,
+    MissingToolsError,
+    TrustGateError,
+    UpstreamNotConnectedError,
+)
 from .mcp import MCPTransport
 from .transport import Transport, UrllibTransport
 from .types import CONNECTED, Connection, GatewayTool, resolve_tool_name
+from .user import (
+    FileTokenCache,
+    TokenCache,
+    UserSession,
+    UserToken,
+    login_flow,
+    resolve_store_url,
+)
 from .whoami import (
     BLOCKED_BY_ADMINISTRATOR,
     BLOCKED_BY_END_USER,
@@ -146,6 +164,28 @@ class TrustGate:
 
         return Agent(plane, self._transport, consumer.slug, transport, tools, connections)
 
+    @staticmethod
+    def login(
+        url: str | None = None,
+        *,
+        cache: TokenCache | None = None,
+        open_browser: bool = True,
+        force: bool = False,
+        timeout: float = 30.0,
+        transport: Transport | None = None,
+        on_url: Callable[[str], None] | None = None,
+    ) -> TrustGateUser:
+        """Signs a person in to their own Store. See :meth:`TrustGateUser.login`."""
+        return TrustGateUser.login(
+            url,
+            cache=cache,
+            open_browser=open_browser,
+            force=force,
+            timeout=timeout,
+            transport=transport,
+            on_url=on_url,
+        )
+
     def for_end_user(self, end_user: str, requires: list[str] | None = None) -> EndUserAgent:
         """The handle for one named person, on the same consumer and the same key.
 
@@ -169,6 +209,114 @@ class TrustGate:
         )
         _check_requires(agent.refresh(), list(requires or []))
         return agent
+
+
+class TrustGateUser:
+    """A person, signed in, on their own Store.
+
+    The other side of :class:`TrustGate`: no API key and no application, but a
+    person with what Access grants them - the servers they installed from the
+    Store, narrowed to what their user and groups may reach, called with their
+    own accounts. Use :meth:`login` to sign in through the browser, or pass an
+    ``access_token`` your own sign-in already holds (a backend that ran the
+    OAuth flow for its user).
+    """
+
+    def __init__(
+        self,
+        url: str | None = None,
+        access_token: str | None = None,
+        timeout: float = 30.0,
+        transport: Transport | None = None,
+        *,
+        token: UserToken | None = None,
+        cache: TokenCache | None = None,
+    ) -> None:
+        #: The Store's MCP endpoint, ``https://<gateway>.<mcp host>/store/mcp``.
+        self.url = resolve_store_url(url)
+        self._transport = transport or UrllibTransport()
+        self._timeout = timeout
+        self._cache = cache
+        if token is None:
+            raw = (access_token or os.environ.get("TRUSTGATE_ACCESS_TOKEN") or "").strip()
+            if not raw:
+                raise TrustGateError(
+                    "access_token is required (or set TRUSTGATE_ACCESS_TOKEN); "
+                    f'to sign in through the browser use TrustGate.login(url="{self.url}")'
+                )
+            token = UserToken(access_token=raw)
+        self.session = UserSession(self.url, token, self._transport, timeout, cache)
+
+    @classmethod
+    def login(
+        cls,
+        url: str | None = None,
+        *,
+        cache: TokenCache | None = None,
+        open_browser: bool = True,
+        force: bool = False,
+        timeout: float = 30.0,
+        transport: Transport | None = None,
+        on_url: Callable[[str], None] | None = None,
+    ) -> TrustGateUser:
+        """Signs in through the browser, or reuses the session from last time.
+
+        The session is kept in ``cache`` - by default a file in
+        ``~/.trustgate`` only this user can read - so a script signs in once
+        and runs again without a browser until the sign-in ends (a day, on
+        NeuralTrust's cloud). Pass a :class:`MemoryTokenCache` to keep nothing
+        on disk, and ``force=True`` to sign in again regardless.
+
+        The browser comes back to a port on this machine, so this is for the
+        person's own computer. A server acting for many people is an
+        application, with an API key: see :class:`TrustGate`.
+        """
+        resolved = resolve_store_url(url)
+        http = transport or UrllibTransport()
+        store = cache if cache is not None else FileTokenCache()
+        if not force:
+            cached = store.load(resolved)
+            if cached is not None:
+                session = UserSession(resolved, cached, http, timeout, store)
+                try:
+                    if cached.expires_soon(time.time()):
+                        if not session.renew():
+                            raise LoginRequiredError(resolved)
+                    return cls(
+                        resolved, timeout=timeout, transport=http, token=session.token, cache=store
+                    )
+                except LoginRequiredError:
+                    pass
+        token = login_flow(resolved, http, timeout, open_browser=open_browser, on_url=on_url)
+        store.save(resolved, token)
+        return cls(resolved, timeout=timeout, transport=http, token=token, cache=store)
+
+    def logout(self) -> None:
+        """Forgets the session kept for this Store. The browser's sign-in stays."""
+        if self._cache is not None:
+            self._cache.clear(self.url)
+
+    def connect(self, requires: list[str] | None = None) -> UserAgent:
+        """Opens this person's Store and checks the tools the agent needs are on it.
+
+        A server whose account the person has not connected yet is not on the
+        surface; :attr:`UserAgent.needs_connect` names those and
+        :meth:`UserAgent.connect_link` is the page to connect them.
+        """
+        parsed = urlparse(self.url)
+        config = Config(
+            base_url=f"{parsed.scheme}://{parsed.netloc}", api_key="", timeout=self._timeout
+        )
+        transport = MCPTransport(config, self._transport, self.url, credentials=self.session)
+        tools = transport.list_tools()
+        missing = _missing(tools, list(requires or []))
+        if missing:
+            raise MissingToolsError(
+                missing,
+                sorted(tool.name for tool in tools),
+                "Install them from the Store, or ask an admin to grant them in Access.",
+            )
+        return UserAgent(transport, tools)
 
 
 def _on_mcp_plane(config: Config, slug: str, url: str) -> Config:

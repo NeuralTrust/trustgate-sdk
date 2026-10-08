@@ -1,4 +1,12 @@
-export { TrustGate, type ConnectOptions, type LLMEndpoint } from './client.js'
+export {
+	TrustGate,
+	TrustGateUser,
+	type ConnectOptions,
+	type LLMEndpoint,
+	type LoginOptions,
+	type TrustGateUserConfig,
+} from './client.js'
+export { FileTokenCache, MemoryTokenCache, type TokenCache, type UserToken } from './user.js'
 export {
 	whoAmI,
 	selectConsumer,
@@ -9,7 +17,7 @@ export {
 	type UpstreamAccount,
 	type UpstreamBlockedBy,
 } from './whoami.js'
-export { Agent, EndUserAgent, Toolkit, type ToolkitOptions } from './agent.js'
+export { Agent, EndUserAgent, Toolkit, UserAgent, type ToolkitOptions } from './agent.js'
 export { type TrustGateConfig, API_KEY_HEADER, END_USER_HEADER } from './config.js'
 export { MCPTransport } from './mcp.js'
 export { inlineRefs, stripInjectedNulls, toStrict, type StrictResult } from './schema.js'
@@ -29,6 +37,7 @@ export {
 	AuthenticationError,
 	ConsentRequiredError,
 	InvalidRequestError,
+	LoginRequiredError,
 	MissingToolsError,
 	PlaneUnavailableError,
 	PolicyBlockedError,

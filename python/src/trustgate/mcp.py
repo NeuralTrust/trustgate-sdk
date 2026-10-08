@@ -9,7 +9,7 @@ session to carry, so every call stands on its own.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Protocol
 
 from .config import API_KEY_HEADER, Config
 from .errors import (
@@ -28,6 +28,20 @@ from .transport import Response, Transport, retry_after_ms
 from .types import GatewayTool
 from .whoami import BLOCKED_BY_ADMINISTRATOR, BLOCKED_BY_END_USER, KeyUpstream
 
+
+class Credentials(Protocol):
+    """How a caller other than an API key authenticates: a signed-in person.
+
+    ``headers`` is read on every call so a token can be renewed under a running
+    agent; ``renew`` is asked once after the gateway refuses one, and says
+    whether there is anything to retry with.
+    """
+
+    def headers(self) -> dict[str, str]: ...
+
+    def renew(self) -> bool: ...
+
+
 CODE_CONSENT_REQUIRED = -32003
 CODE_RATE_LIMITED = -32004
 CODE_UNAVAILABLE = -32005
@@ -45,15 +59,19 @@ class MCPTransport:
         transport: Transport,
         url: str,
         extra_headers: dict[str, str] | None = None,
+        credentials: Credentials | None = None,
     ) -> None:
         self._config = config
         self._transport = transport
         self.url = url
         self._extra_headers = dict(extra_headers or {})
+        self._credentials = credentials
         self._next_id = 1
 
     @property
     def headers(self) -> dict[str, str]:
+        if self._credentials is not None:
+            return {**self._credentials.headers(), **self._extra_headers}
         return {API_KEY_HEADER: self._config.api_key, **self._extra_headers}
 
     def list_tools(self) -> list[GatewayTool]:
@@ -87,7 +105,30 @@ class MCPTransport:
         body = json.dumps(
             {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}
         ).encode("utf-8")
-        response = self._transport.request(
+        response = self._post(body)
+        # A session token can be refused before its own expiry says so (the
+        # clock here is not the gateway's); one renewal, one retry.
+        if response.status == 401 and self._credentials is not None and self._credentials.renew():
+            response = self._post(body)
+        if response.status in (401, 403):
+            refused = "this sign-in" if self._credentials is not None else "this API key"
+            raise AuthenticationError(
+                f"the gateway refused {refused} for {self.url}{_what_it_said(response.text)}",
+                status=response.status,
+            )
+        rpc = parse_rpc_response(response.text, request_id)
+        if rpc is None:
+            raise TrustGateError(
+                f"MCP {method} returned no JSON-RPC response (HTTP {response.status})"
+                f"{_what_it_said(response.text)}",
+                status=response.status,
+            )
+        if "error" in rpc:
+            raise _error_for_rpc(rpc["error"], response)
+        return rpc.get("result") or {}
+
+    def _post(self, body: bytes) -> Response:
+        return self._transport.request(
             "POST",
             self.url,
             {
@@ -100,20 +141,6 @@ class MCPTransport:
             body,
             self._config.timeout,
         )
-        if response.status in (401, 403):
-            raise AuthenticationError(
-                f"the gateway refused this API key for {self.url}", status=response.status
-            )
-        rpc = parse_rpc_response(response.text, request_id)
-        if rpc is None:
-            raise TrustGateError(
-                f"MCP {method} returned no JSON-RPC response (HTTP {response.status})"
-                f"{_what_it_said(response.text)}",
-                status=response.status,
-            )
-        if "error" in rpc:
-            raise _error_for_rpc(rpc["error"], response)
-        return rpc.get("result") or {}
 
 
 def parse_rpc_response(text: str, request_id: int) -> dict[str, Any] | None:
