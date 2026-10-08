@@ -273,11 +273,22 @@ export class EndUserAgent {
 	}
 }
 
-/** The prefix of the tool the Store adds for each server still waiting on an account. */
-export const CONNECT_TOOL_PREFIX = 'trustgate_connect_'
+/** The Store's inventory: every server the person has, with the ones still waiting on their account. */
+const INVENTORY_TOOL = 'trustgate_list_tools'
 
-/** How long the link a connect tool mints stays valid, as the gateway sets it. */
+/**
+ * The Store's install. Called again for a server that is installed but not
+ * connected, it returns the link to connect it: the Store's one way in.
+ */
+const INSTALL_TOOL = 'trustgate_store_install'
+
+/** How long the link install mints stays valid, as the gateway sets it. */
 const CONNECT_TICKET_TTL_MS = 15 * 60_000
+
+interface PendingServer {
+	name: string
+	code: string
+}
 
 /**
  * A person's handle on their own Store.
@@ -285,8 +296,9 @@ const CONNECT_TICKET_TTL_MS = 15 * 60_000
  * The servers are the ones they installed, narrowed to what Access grants
  * them, and every call runs as them — their own upstream accounts, their own
  * audit trail. A server whose account they have not connected yet is not on
- * the surface: the Store puts a `trustgate_connect_<server>` tool in its place,
- * which is what {@link needsConnect} and {@link connectLink} read.
+ * the surface: the Store's inventory reports it, and installing it again
+ * returns the page to connect it, which is what {@link needsConnect} and
+ * {@link connectLink} read.
  */
 export class UserAgent {
 	readonly actor = Actor.User
@@ -294,8 +306,14 @@ export class UserAgent {
 	constructor(
 		private readonly transport: MCPTransport,
 		/** The tools on this person's Store, as the gateway named them. */
-		public tools: GatewayTool[]
+		public tools: GatewayTool[],
+		private pending: PendingServer[] = []
 	) {}
+
+	/** @internal Opens the handle with what the Store says is still waiting. */
+	static async open(transport: MCPTransport, tools: GatewayTool[], signal?: AbortSignal): Promise<UserAgent> {
+		return new UserAgent(transport, tools, await readPending(transport, tools, signal))
+	}
 
 	/**
 	 * URL and headers for a framework that brings its own MCP client.
@@ -329,31 +347,49 @@ export class UserAgent {
 	/** Re-reads the surface: after the person installs a server, or connects one. */
 	async refresh(signal?: AbortSignal): Promise<GatewayTool[]> {
 		this.tools = await this.transport.listTools(signal)
+		this.pending = await readPending(this.transport, this.tools, signal)
 		return this.tools
 	}
 
 	/** The servers waiting for this person to connect (or reconnect) an account. */
 	get needsConnect(): string[] {
-		return this.tools.filter(isConnectTool).map(connectLabel)
+		return this.pending.map((server) => server.name)
 	}
 
 	/**
-	 * The page where this person connects every account still missing.
+	 * The page where this person connects a server still missing.
 	 *
-	 * Undefined when nothing is. The link expires, so it is minted when it is
-	 * about to be shown; after the person connects, {@link refresh} brings the
-	 * server's tools onto the surface.
+	 * `server` is one of {@link needsConnect} (its code works too); without it,
+	 * the first. Undefined when nothing is waiting. Each server has its own
+	 * page. The link expires, so it is minted when it is about to be shown;
+	 * after the person connects, {@link refresh} brings the server's tools onto
+	 * the surface.
 	 */
-	async connectLink(signal?: AbortSignal): Promise<ConnectLink | undefined> {
-		const tool = this.tools.find(isConnectTool)
-		if (!tool) return undefined
-		const result = await this.transport.callTool(tool.name, {}, signal)
+	async connectLink(server?: string | AbortSignal, signal?: AbortSignal): Promise<ConnectLink | undefined> {
+		if (server instanceof AbortSignal) {
+			signal = server
+			server = undefined
+		}
+		let pending = this.pending
+		if (server !== undefined) {
+			const named = server
+			pending = pending.filter((p) => p.name === named || p.code === named)
+			if (pending.length === 0) {
+				throw new TrustGateError(
+					`${named} is not waiting to be connected; these are: ${this.needsConnect.join(', ') || 'none'}`,
+					{ code: 'nothing_to_connect' }
+				)
+			}
+		}
+		const target = pending[0]
+		if (!target) return undefined
+		const result = await this.transport.callTool(INSTALL_TOOL, { code: target.code }, signal)
 		const structured = result.structuredContent as Record<string, unknown> | undefined
 		const offered = typeof structured?.connect_url === 'string' ? structured.connect_url : ''
 		if (!offered) return undefined
 		const connectUrl = gatewayConnectUrl(offered, this.transport.url)
 		if (!connectUrl) {
-			throw new TrustGateError(`${tool.name} answered with a link that is not this gateway's, so it was not passed on`, {
+			throw new TrustGateError(`${INSTALL_TOOL} answered with a link that is not this gateway's, so it was not passed on`, {
 				code: 'untrusted_connect_url',
 			})
 		}
@@ -365,13 +401,32 @@ export class UserAgent {
 	}
 }
 
-function isConnectTool(tool: GatewayTool): boolean {
-	return tool.name.startsWith(CONNECT_TOOL_PREFIX)
-}
-
-function connectLabel(tool: GatewayTool): string {
-	const title = tool.title?.trim() ?? ''
-	return title.startsWith('Connect ') ? title.slice('Connect '.length) : tool.name.slice(CONNECT_TOOL_PREFIX.length)
+/**
+ * The servers the Store says are waiting on this person, and connectable.
+ *
+ * Read from the inventory, which names install as the way to connect each one.
+ * A server the person cannot connect themselves (an account an admin holds for
+ * everyone) carries no such pointer and is left out. A Store without the
+ * inventory has nothing to say, and neither does this.
+ */
+async function readPending(
+	transport: MCPTransport,
+	tools: GatewayTool[],
+	signal?: AbortSignal
+): Promise<PendingServer[]> {
+	if (!tools.some((tool) => tool.name === INVENTORY_TOOL)) return []
+	const result = await transport.callTool(INVENTORY_TOOL, {}, signal)
+	const structured = result.structuredContent as Record<string, unknown> | undefined
+	const servers = Array.isArray(structured?.servers) ? structured.servers : []
+	const pending: PendingServer[] = []
+	for (const entry of servers) {
+		if (typeof entry !== 'object' || entry === null) continue
+		const server = entry as Record<string, unknown>
+		const code = typeof server.code === 'string' ? server.code : ''
+		if (server.state !== 'needs_connect' || server.connect_tool !== INSTALL_TOOL || !code) continue
+		pending.push({ name: typeof server.name === 'string' && server.name ? server.name : code, code })
+	}
+	return pending
 }
 
 /** Builds the per-user handle, with the header that names them. */

@@ -117,8 +117,8 @@ take the key:
 ```python
 me = TrustGate.login(url="https://acme.mcp.neuraltrust.ai/store/mcp").connect()
 
-if me.needs_connect:  # servers whose account you have not connected yet
-    print("Connect:", me.connect_link().connect_url)
+for server in me.needs_connect:  # servers whose account you have not connected yet
+    print(f"Connect {server}:", me.connect_link(server).connect_url)
 toolkit = me.toolkit(ToolFormat.ANTHROPIC_MESSAGES)
 ```
 

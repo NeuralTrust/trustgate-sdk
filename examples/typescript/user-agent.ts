@@ -37,12 +37,15 @@ const user = personal
 		}).catch(fail)
 const me = await user.connect().catch(fail)
 
-// A server whose account you have not connected is not on the surface yet; one
-// link connects all of them, and the next run picks them up.
+// A server whose account you have not connected is not on the surface yet.
+// Each has its own page; once connected, the next run picks it up.
 if (me.needsConnect.length > 0) {
-	const link = await me.connectLink().catch(fail)
-	console.log(`Not connected yet: ${me.needsConnect.join(', ')}.`)
-	if (link) console.log(`Connect them here, then run this again: ${link.connectUrl}\n`)
+	console.log(`Not connected yet: ${me.needsConnect.join(', ')}. Connect them, then run this again:`)
+	for (const server of me.needsConnect) {
+		const link = await me.connectLink(server).catch(fail)
+		if (link) console.log(`  ${server}: ${link.connectUrl}`)
+	}
+	console.log()
 }
 
 const openai = personal
