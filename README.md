@@ -153,12 +153,26 @@ applications naming `user_123` never reach the same account — which is also wh
 only an application's own credential may assert one: a request carrying a
 person's own token is already that person.
 
-## A person, signed in, on their own Store
+## A person, on their own Store
 
-Not everything is an application. A person can run an agent as themselves:
-they sign in through the browser, the way their MCP client does, and get their
-own Store — the servers they installed, narrowed to what Access grants their
-user and groups, called with their own accounts. No API key is involved.
+Not everything is an application. A person can run an agent as themselves and
+get their own Store — the servers they installed, narrowed to what Access grants
+their user and groups, called with their own accounts — and their models.
+
+The simplest way in is their **personal key**, from the Portal (Personal key):
+
+```ts
+const me = new TrustGateUser({ apiKey: process.env.TRUSTGATE_PERSONAL_KEY })
+const store = await me.connect() // your MCP tools
+const llm = await me.llm() // your models, for the provider's own SDK
+```
+
+The key is a person's, not an application's: `new TrustGate({ apiKey })` refuses
+it and says to use `TrustGateUser`. It lasts up to 90 days and is rotated or
+revoked in the Portal.
+
+Or sign in through the browser, the way an MCP client does — tools only, the
+models take the key:
 
 ```ts
 const me = await (await TrustGate.login({ url: 'https://acme.mcp.neuraltrust.ai/store/mcp' })).connect()

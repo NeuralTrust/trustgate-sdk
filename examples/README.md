@@ -52,6 +52,9 @@ reaches, so no slug and no second URL travel into your configuration.
 
 The user examples take neither. They need:
 
+- `TRUSTGATE_PERSONAL_KEY` — your personal key, from the Portal (Personal
+  key). It is all the user examples need: it reaches your MCP tools and your
+  models, with no browser. Without it they sign in instead, with:
 - `TRUSTGATE_STORE_URL` — your Store's MCP URL,
   `https://<gateway>.<mcp host>/store/mcp`, as the console shows it where the
   Store is added to an MCP client. The first run opens your browser to sign in;

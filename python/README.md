@@ -98,10 +98,21 @@ comes from the call, not from anything configured on the application. The name i
 yours to choose and the gateway namespaces it, so two applications naming
 `user_123` never reach the same account.
 
-## An agent for yourself, signed in
+## An agent for yourself
 
-No application and no API key: sign in through the browser and get your own
-Store - the servers you installed, narrowed to what Access grants you.
+No application: your own Store - the servers you installed, narrowed to what
+Access grants you - and your models, with your **personal key** from the Portal
+(Personal key):
+
+```python
+me = TrustGateUser(api_key="ag_...")  # or TRUSTGATE_PERSONAL_KEY
+toolkit = me.connect().toolkit(ToolFormat.OPENAI_RESPONSES)  # your MCP tools
+llm = me.llm()  # your models: OpenAI(base_url=llm.base_url, api_key=llm.api_key)
+```
+
+`TrustGate(api_key=...)` is an application's, and refuses a personal key with
+a pointer here. Or sign in through the browser instead - tools only, the models
+take the key:
 
 ```python
 me = TrustGate.login(url="https://acme.mcp.neuraltrust.ai/store/mcp").connect()

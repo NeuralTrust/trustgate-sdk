@@ -13,6 +13,7 @@ import {
 	ConsentRequiredError,
 	LoginRequiredError,
 	MissingToolsError,
+	PlaneUnavailableError,
 	TrustGateError,
 	UpstreamNotConnectedError,
 	type BlockedUpstream,
@@ -29,7 +30,7 @@ import {
 	type TokenCache,
 	type UserToken,
 } from './user.js'
-import { selectConsumer, whoAmI, type KeyIdentity, type KeyUpstream } from './whoami.js'
+import { selectConsumer, whoAmI, type KeyConsumer, type KeyIdentity, type KeyUpstream } from './whoami.js'
 
 export type ConnectOptions = {
 	/**
@@ -132,7 +133,7 @@ export class TrustGate {
 	 * request runs as is read from the request rather than declared anywhere.
 	 */
 	async connect(options: ConnectOptions = {}): Promise<Agent> {
-		const identity = await this.identity(options.signal)
+		const identity = await this.applicationOnly(options.signal)
 		const consumer = onSafePlane(selectConsumer(identity, 'MCP', this.#config.mcpConsumer, 'mcpConsumer'), this.#config)
 
 		// Accounts before tools: a server with no account for the application can
@@ -169,6 +170,25 @@ export class TrustGate {
 		return new Agent(plane, consumer.slug, transport, tools, missing, connections)
 	}
 
+	/**
+	 * The key's identity, refused when it is a person's.
+	 *
+	 * A personal key runs as its owner: it has no application consumer, no end
+	 * users to name and no application accounts, so the handles here would each
+	 * fail on their first call with an answer that says none of that. Its
+	 * owner's Store is {@link TrustGateUser}.
+	 */
+	private async applicationOnly(signal?: AbortSignal): Promise<KeyIdentity> {
+		const identity = await this.identity(signal)
+		if (identity.key.personal) {
+			throw new TrustGateError(
+				'this is a personal key: it runs as its owner, not as an application. ' +
+					"Open its owner's tools and models with new TrustGateUser({ apiKey })."
+			)
+		}
+		return identity
+	}
+
 	/** Signs a person in to their own Store. See {@link TrustGateUser.login}. */
 	static login(options: LoginOptions = {}): Promise<TrustGateUser> {
 		return TrustGateUser.login(options)
@@ -184,7 +204,7 @@ export class TrustGate {
 	 * there is no startup preflight here and one in {@link connect}.
 	 */
 	async forEndUser(endUser: string, options: ConnectOptions = {}): Promise<EndUserAgent> {
-		const identity = await this.identity(options.signal)
+		const identity = await this.applicationOnly(options.signal)
 		const consumer = onSafePlane(selectConsumer(identity, 'MCP', this.#config.mcpConsumer, 'mcpConsumer'), this.#config)
 		const agent = endUserAgent(onMCPPlane(this.#config, consumer), consumer.slug, endUser, consumer.url, [])
 		const tools = await agent.refresh(options.signal)
@@ -199,9 +219,21 @@ export class TrustGate {
 export type TrustGateUserConfig = {
 	/**
 	 * The Store's MCP endpoint, `https://<gateway>.<mcp host>/store/mcp`, or
-	 * its host. Defaults to `TRUSTGATE_STORE_URL`.
+	 * its host. Defaults to `TRUSTGATE_STORE_URL`; with a personal key it is
+	 * asked of the gateway when left out.
 	 */
 	url?: string
+	/**
+	 * The person's personal key, from the Portal (Personal key): their tools and
+	 * their models, with no browser. Defaults to `TRUSTGATE_PERSONAL_KEY` when
+	 * no session token is given.
+	 */
+	apiKey?: string
+	/**
+	 * Where a personal key asks what it reaches, as {@link TrustGateConfig.baseUrl}.
+	 * Defaults to the Store URL's host, then `TRUSTGATE_URL`, then NeuralTrust's cloud.
+	 */
+	baseUrl?: string
 	/**
 	 * A session token your own sign-in already holds — a backend that ran the
 	 * OAuth flow for its user. Defaults to `TRUSTGATE_ACCESS_TOKEN`.
@@ -244,9 +276,12 @@ export type LoginOptions = LoginFlowOptions & {
  * `accessToken` your own sign-in already holds.
  */
 export class TrustGateUser {
-	/** The Store's MCP endpoint, `https://<gateway>.<mcp host>/store/mcp`. */
-	readonly url: string
-	readonly session: UserSession
+	/** The session, for a person who signed in; undefined with a personal key. */
+	readonly session: UserSession | undefined
+	#url: string | undefined
+	// Runtime-private: it holds the personal key, and a logged client must not.
+	readonly #personal: ResolvedConfig | undefined
+	#identity?: Promise<KeyIdentity>
 	private readonly fetchImpl: typeof globalThis.fetch
 	private readonly timeoutMs: number
 	private readonly allowInsecureHttp: boolean
@@ -254,22 +289,119 @@ export class TrustGateUser {
 
 	constructor(config: TrustGateUserConfig = {}) {
 		this.allowInsecureHttp = config.allowInsecureHttp ?? insecureHttpFromEnv()
-		this.url = resolveStoreUrl(config.url, this.allowInsecureHttp)
 		this.fetchImpl = config.fetch ?? globalThis.fetch
 		this.timeoutMs = config.timeoutMs ?? 30_000
 		this.cache = config.cache
+		const hasToken = !!config.token || !!config.accessToken?.trim()
+		const key = config.apiKey?.trim() || (hasToken ? '' : fromEnv('TRUSTGATE_PERSONAL_KEY')?.trim() || '')
+		if (key) {
+			if (hasToken) throw new TrustGateError('pass a personal key or a session token, not both')
+			// The gateway's own MCP host answers whoami too, so a Store URL is as
+			// good a place to ask as the shared entry point.
+			this.#url = config.url ? resolveStoreUrl(config.url, this.allowInsecureHttp) : undefined
+			this.#personal = resolveConfig({
+				baseUrl: config.baseUrl ?? (this.#url ? new URL(this.#url).origin : undefined),
+				apiKey: key,
+				fetch: this.fetchImpl,
+				timeoutMs: this.timeoutMs,
+				allowInsecureHttp: this.allowInsecureHttp,
+			})
+			this.session = undefined
+			return
+		}
+		this.#url = resolveStoreUrl(config.url, this.allowInsecureHttp)
+		const url = this.#url
 		let token = config.token
 		if (!token) {
 			const raw = (config.accessToken ?? fromEnv('TRUSTGATE_ACCESS_TOKEN') ?? '').trim()
 			if (!raw) {
 				throw new TrustGateError(
 					'accessToken is required (or set TRUSTGATE_ACCESS_TOKEN); to sign in through ' +
-						`the browser use TrustGate.login({ url: "${this.url}" })`
+						`the browser use TrustGate.login({ url: "${url}" }), or pass a personal key as apiKey`
 				)
 			}
 			token = { accessToken: raw, expiresAt: 0 }
 		}
-		this.session = new UserSession(this.url, token, this.http, this.cache)
+		this.#personal = undefined
+		this.session = new UserSession(url, token, this.http, this.cache)
+	}
+
+	/**
+	 * The Store's MCP endpoint, `https://<gateway>.<mcp host>/store/mcp`. With a
+	 * personal key and no `url` it is empty until the gateway is asked
+	 * ({@link connect}, {@link storeUrl}).
+	 */
+	get url(): string {
+		return this.#url ?? ''
+	}
+
+	/** The Store's MCP endpoint, asking the gateway for a personal key's when it was not given. */
+	async storeUrl(signal?: AbortSignal): Promise<string> {
+		this.#url ??= (await this.personalConsumer('MCP', signal)).url
+		return this.#url
+	}
+
+	/**
+	 * What the personal key reaches, asked of the gateway once. Only a personal
+	 * key has one: a session's Store is the URL it signed in to.
+	 */
+	async identity(signal?: AbortSignal): Promise<KeyIdentity> {
+		const personal = this.#personal
+		if (!personal) throw new TrustGateError("only a personal key describes itself; a session's Store is its url")
+		this.#identity ??= whoAmI(personal, signal).then(
+			(identity) => {
+				if (!identity.key.personal) {
+					throw new TrustGateError(
+						"this is an application's API key, not a personal key: it runs as the application. " +
+							'Use new TrustGate({ apiKey }).'
+					)
+				}
+				return identity
+			},
+			(error: unknown) => {
+				this.#identity = undefined
+				throw error
+			}
+		)
+		return this.#identity
+	}
+
+	private async personalConsumer(plane: 'MCP' | 'LLM', signal?: AbortSignal): Promise<KeyConsumer> {
+		const identity = await this.identity(signal)
+		const found = identity.consumers.find((consumer) => consumer.type === plane && consumer.url)
+		if (!found) {
+			const what = plane === 'MCP' ? 'MCP Store' : 'models (the LLM Store)'
+			throw new PlaneUnavailableError(`this personal key reaches no ${what} on its gateway. Ask an administrator to set it up.`)
+		}
+		return onSafePlane(found, this.#personal as ResolvedConfig)
+	}
+
+	/**
+	 * The person's models, ready for a provider's own SDK, through the gateway.
+	 *
+	 * Only a personal key reaches them: the LLM Store takes the key, not a
+	 * sign-in. With a session, create a Personal key in the Portal and pass it
+	 * as `apiKey`.
+	 */
+	async llm(signal?: AbortSignal): Promise<LLMEndpoint> {
+		const personal = this.#personal
+		if (!personal) {
+			throw new TrustGateError(
+				'models take a personal key, not a sign-in: create one in the Portal (Personal key) ' +
+					'and pass it as new TrustGateUser({ apiKey }).'
+			)
+		}
+		const consumer = await this.personalConsumer('LLM', signal)
+		return maskedWhenPrinted<LLMEndpoint>(
+			{
+				baseUrl: consumer.url,
+				anthropicBaseUrl: withoutVersion(consumer.url),
+				apiKey: personal.apiKey,
+				headers: { [API_KEY_HEADER]: personal.apiKey },
+				consumer: consumer.slug,
+			},
+			['apiKey', 'headers']
+		)
 	}
 
 	/**
@@ -315,7 +447,7 @@ export class TrustGateUser {
 
 	/** Forgets the session kept for this Store. The browser's sign-in stays. */
 	async logout(): Promise<void> {
-		await this.cache?.clear(this.url)
+		if (this.#url) await this.cache?.clear(this.#url)
 	}
 
 	/**
@@ -326,14 +458,19 @@ export class TrustGateUser {
 	 * {@link UserAgent.connectLink} is the page to connect them.
 	 */
 	async connect(options: ConnectOptions = {}): Promise<UserAgent> {
-		const config: ResolvedConfig = {
-			baseUrl: new URL(this.url).origin,
-			apiKey: '',
-			fetch: this.fetchImpl,
-			timeoutMs: this.timeoutMs,
-			allowInsecureHttp: this.allowInsecureHttp,
-		}
-		const transport = new MCPTransport(config, this.url, {}, this.session)
+		const url = await this.storeUrl(options.signal)
+		const personal = this.#personal
+		// A personal key travels as an application's does; the gateway knows it is a person's.
+		const config: ResolvedConfig = personal
+			? { ...personal, baseUrl: new URL(url).origin }
+			: {
+					baseUrl: new URL(url).origin,
+					apiKey: '',
+					fetch: this.fetchImpl,
+					timeoutMs: this.timeoutMs,
+					allowInsecureHttp: this.allowInsecureHttp,
+				}
+		const transport = personal ? new MCPTransport(config, url) : new MCPTransport(config, url, {}, this.session)
 		const tools = await transport.listTools(options.signal)
 		const missing = missingTools(tools, options.requires ?? [])
 		if (missing.length > 0) {

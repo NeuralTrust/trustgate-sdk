@@ -1,18 +1,28 @@
 """An assistant for yourself, on your own Store.
 
-No application and no API key: you sign in as yourself, and the tools are the
-servers you installed from the Store, narrowed to what Access grants you. The
-first run opens your browser; later runs reuse the session until it ends.
+No application: you run as yourself, and the tools are the servers you
+installed from the Store, narrowed to what Access grants you. With your
+personal key (the Portal's Personal key, in TRUSTGATE_PERSONAL_KEY) nothing
+else is needed. Without it, the first run opens your browser to sign in to
+TRUSTGATE_STORE_URL; later runs reuse the session until it ends.
 
     uv run user_agent.py
     uv run user_agent.py "what changed in the runbook this week?"
 """
 
+import os
 import sys
 
 import anthropic
 
-from trustgate import ConsentRequiredError, ToolFormat, TrustGate, TrustGateError, UserAgent
+from trustgate import (
+    ConsentRequiredError,
+    ToolFormat,
+    TrustGate,
+    TrustGateError,
+    TrustGateUser,
+    UserAgent,
+)
 
 from _config import load_env_file, require
 
@@ -51,11 +61,6 @@ def answer(me: UserAgent, client: "anthropic.Anthropic", question: str) -> str:
 
 def main() -> None:
     load_env_file()
-    store_url = require(
-        "TRUSTGATE_STORE_URL",
-        "It is your Store's MCP URL, https://<gateway>.<mcp host>/store/mcp - the "
-        "console shows it where the Store is added to an MCP client.",
-    )
     api_key = require(
         "ANTHROPIC_API_KEY",
         "This example calls Anthropic directly; the key is yours, not the gateway's.",
@@ -63,9 +68,19 @@ def main() -> None:
     question = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_QUESTION
 
     try:
-        # The browser opens on the first run only: the session is kept in
-        # ~/.trustgate and renewed, until the sign-in itself ends.
-        me = TrustGate.login(url=store_url).connect()
+        if os.environ.get("TRUSTGATE_PERSONAL_KEY", "").strip():
+            # The key says which gateway and which Store; no browser.
+            me = TrustGateUser().connect()
+        else:
+            store_url = require(
+                "TRUSTGATE_STORE_URL",
+                "Set TRUSTGATE_PERSONAL_KEY to your personal key (the Portal's Personal "
+                "key), or this to your Store's MCP URL, https://<gateway>.<mcp host>/store/mcp, "
+                "to sign in through the browser.",
+            )
+            # The browser opens on the first run only: the session is kept in
+            # ~/.trustgate and renewed, until the sign-in itself ends.
+            me = TrustGate.login(url=store_url).connect()
     except TrustGateError as error:
         sys.exit(f"could not open your Store: {error}")
 

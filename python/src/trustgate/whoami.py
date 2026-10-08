@@ -50,6 +50,9 @@ class KeyInfo:
     name: str | None = None
     #: When it retires itself. ``None`` means never.
     expires_at: datetime | None = None
+    #: A person's own key (the Portal's Personal key), not an application's: it
+    #: runs as its owner, and what it reaches is their Store on each plane.
+    personal: bool = False
 
 
 @dataclass(frozen=True)
@@ -115,6 +118,7 @@ def who_am_i(config: Config, transport: Transport) -> KeyIdentity:
         key=KeyInfo(
             name=key.get("name") or None,
             expires_at=_parse_time(key.get("expires_at")),
+            personal=key.get("personal") is True,
         ),
         consumers=[
             KeyConsumer(

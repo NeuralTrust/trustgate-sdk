@@ -51,6 +51,11 @@ export type KeyInfo = {
 	name?: string
 	/** When it retires itself. `undefined` means never. */
 	expiresAt?: Date
+	/**
+	 * A person's own key (the Portal's Personal key), not an application's: it
+	 * runs as its owner, and what it reaches is their Store on each plane.
+	 */
+	personal?: boolean
 }
 
 /** Everything the key can say about itself. */
@@ -62,7 +67,7 @@ export type KeyIdentity = {
 
 type Payload = {
 	gateway?: string
-	key?: { name?: string; expires_at?: string }
+	key?: { name?: string; expires_at?: string; personal?: boolean }
 	consumers?: {
 		slug: string
 		name?: string
@@ -97,6 +102,7 @@ export async function whoAmI(config: ResolvedConfig, signal?: AbortSignal): Prom
 		key: {
 			name: body?.key?.name || undefined,
 			expiresAt: parseDate(body?.key?.expires_at),
+			...(body?.key?.personal === true ? { personal: true } : {}),
 		},
 		consumers: (body?.consumers ?? []).map((consumer) => ({
 			slug: consumer.slug,
