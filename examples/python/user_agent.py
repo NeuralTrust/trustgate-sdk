@@ -84,13 +84,17 @@ def main() -> None:
     except TrustGateError as error:
         sys.exit(f"could not open your Store: {error}")
 
-    # A server whose account you have not connected is not on the surface yet;
-    # one link connects all of them, and the next run picks them up.
+    # A server whose account you have not connected is not on the surface yet.
+    # Each has its own page; once connected, the next run picks it up.
     if me.needs_connect:
-        link = me.connect_link()
-        print(f"Not connected yet: {', '.join(me.needs_connect)}.")
-        if link is not None:
-            print(f"Connect them here, then run this again: {link.connect_url}\n")
+        print(
+            f"Not connected yet: {', '.join(me.needs_connect)}. Connect them, then run this again:"
+        )
+        for server in me.needs_connect:
+            link = me.connect_link(server)
+            if link is not None:
+                print(f"  {server}: {link.connect_url}")
+        print()
 
     print(answer(me, anthropic.Anthropic(api_key=api_key), question))
 

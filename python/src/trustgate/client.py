@@ -446,8 +446,9 @@ class TrustGateUser:
         """Opens this person's Store and checks the tools the agent needs are on it.
 
         A server whose account the person has not connected yet is not on the
-        surface; :attr:`UserAgent.needs_connect` names those and
-        :meth:`UserAgent.connect_link` is the page to connect them.
+        surface; :attr:`UserAgent.needs_connect` names those (read from the
+        Store's inventory) and :meth:`UserAgent.connect_link` is the page to
+        connect each one.
         """
         url = self.url
         if self._personal is not None:

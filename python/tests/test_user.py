@@ -45,8 +45,12 @@ class FakeStore:
     callback: dict[str, str] | None = None
     #: Overrides the token endpoint the metadata names.
     token_endpoint: str = "https://acme.mcp.test/oauth/token"
-    #: Overrides the link the connect tool answers with.
+    #: The servers trustgate_list_tools reports.
+    inventory: list[dict[str, Any]] = field(default_factory=list)
+    #: Overrides the link install answers with.
     connect_url: str = "https://acme.mcp.test/store/mcp/connect?ticket=tk-9"
+    #: The tools/call requests the Store got, as (name, arguments).
+    calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
     #: Answers the metadata request with a redirect instead.
     metadata_moved: bool = False
     challenge: str = ""
@@ -92,12 +96,19 @@ class FakeStore:
                     200, {"jsonrpc": "2.0", "id": rpc["id"], "result": {"tools": self.tools}}
                 )
             name = rpc["params"]["name"]
-            if name.startswith("trustgate_connect_"):
+            self.calls.append((name, rpc["params"].get("arguments") or {}))
+            if name == "trustgate_list_tools":
+                result = {
+                    "content": [{"type": "text", "text": "the list"}],
+                    "structuredContent": {"servers": self.inventory},
+                }
+            elif name == "trustgate_store_install":
                 result = {
                     "content": [{"type": "text", "text": "open it"}],
                     "structuredContent": {
+                        "already_installed": True,
+                        "requires_auth": True,
                         "connect_url": self.connect_url,
-                        "action": "user_confirmation_required",
                     },
                 }
             else:
@@ -289,16 +300,26 @@ def test_a_refused_token_with_nothing_to_renew_it_is_an_authentication_error() -
     assert not isinstance(raised.value, LoginRequiredError)
 
 
+INVENTORY = {"name": "trustgate_list_tools", "inputSchema": {"type": "object"}}
+
+
+def linear_waiting(**extra: Any) -> dict[str, Any]:
+    return {
+        "name": "Linear",
+        "code": "app.linear/mcp",
+        "state": "needs_connect",
+        "connect_tool": "trustgate_store_install",
+        **extra,
+    }
+
+
 def test_names_the_servers_waiting_on_an_account_and_the_page_to_connect_them() -> None:
     store = FakeStore(
-        tools=[
-            {"name": "notion_search", "inputSchema": {"type": "object"}},
-            {
-                "name": "trustgate_connect_linear",
-                "title": "Connect Linear",
-                "inputSchema": {"type": "object"},
-            },
-        ]
+        tools=[{"name": "notion_search", "inputSchema": {"type": "object"}}, INVENTORY],
+        inventory=[
+            {"name": "Notion", "code": "com.notion/mcp", "state": "ready"},
+            linear_waiting(),
+        ],
     )
 
     agent = login(store).connect()
@@ -308,6 +329,54 @@ def test_names_the_servers_waiting_on_an_account_and_the_page_to_connect_them() 
     assert link is not None
     assert link.connect_url == "https://acme.mcp.test/store/mcp/connect?ticket=tk-9"
     assert link.ticket == "tk-9"
+    # The Store connects an installed server by installing it again.
+    assert store.calls[-1] == ("trustgate_store_install", {"code": "app.linear/mcp"})
+
+
+def test_links_the_server_it_is_asked_for() -> None:
+    store = FakeStore(
+        tools=[INVENTORY],
+        inventory=[linear_waiting(), linear_waiting(name="Notion", code="com.notion/mcp")],
+    )
+    agent = login(store).connect()
+
+    agent.connect_link("Notion")
+
+    assert store.calls[-1] == ("trustgate_store_install", {"code": "com.notion/mcp"})
+    with pytest.raises(TrustGateError) as caught:
+        agent.connect_link("GitHub")
+    assert caught.value.code == "nothing_to_connect"
+
+
+def test_leaves_out_a_server_the_person_cannot_connect() -> None:
+    # An account an admin holds for everyone has no connect pointer.
+    store = FakeStore(
+        tools=[INVENTORY],
+        inventory=[
+            {
+                "name": "Vanta",
+                "code": "com.vanta/mcp",
+                "state": "needs_connect",
+                "cause": "shared_account_not_connected",
+            }
+        ],
+    )
+
+    agent = login(store).connect()
+
+    assert agent.needs_connect == []
+    assert agent.connect_link() is None
+
+
+def test_refresh_reads_what_is_still_waiting() -> None:
+    store = FakeStore(tools=[INVENTORY], inventory=[linear_waiting()])
+    agent = login(store).connect()
+    assert agent.needs_connect == ["Linear"]
+
+    store.inventory = [linear_waiting(state="ready")]
+    agent.refresh()
+
+    assert agent.needs_connect == []
 
 
 def test_has_no_link_when_everything_is_connected() -> None:
@@ -394,13 +463,8 @@ def test_signs_in_at_the_conventional_paths_when_the_metadata_has_moved() -> Non
 
 def test_does_not_pass_on_a_connect_link_that_is_not_the_gateways() -> None:
     store = FakeStore(
-        tools=[
-            {
-                "name": "trustgate_connect_linear",
-                "title": "Connect Linear",
-                "inputSchema": {"type": "object"},
-            }
-        ],
+        tools=[INVENTORY],
+        inventory=[linear_waiting()],
         connect_url="https://login.example/connect?ticket=tk-9",
     )
     agent = login(store).connect()

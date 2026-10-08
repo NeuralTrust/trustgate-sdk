@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -213,11 +214,22 @@ class EndUserAgent(_ToolSurface):
         )
 
 
-#: The prefix of the tool the Store adds for each server still waiting on an account.
-CONNECT_TOOL_PREFIX = "trustgate_connect_"
+#: The Store's inventory: every server the person has, with the ones still
+#: waiting on their account.
+INVENTORY_TOOL = "trustgate_list_tools"
 
-#: How long the link a connect tool mints stays valid, as the gateway sets it.
+#: The Store's install. Called again for a server that is installed but not
+#: connected, it returns the link to connect it: the Store's one way in.
+INSTALL_TOOL = "trustgate_store_install"
+
+#: How long the link install mints stays valid, as the gateway sets it.
 _CONNECT_TICKET_TTL = timedelta(minutes=15)
+
+
+@dataclass(frozen=True)
+class _PendingServer:
+    name: str
+    code: str
 
 
 class UserAgent(_ToolSurface):
@@ -226,28 +238,49 @@ class UserAgent(_ToolSurface):
     The servers are the ones they installed, narrowed to what Access grants
     them, and every call runs as them - their own upstream accounts, their own
     audit trail. A server whose account they have not connected yet is not on
-    the surface: the Store puts a ``trustgate_connect_<server>`` tool in its
-    place, which is what :attr:`needs_connect` and :meth:`connect_link` read.
+    the surface: the Store's inventory reports it, and installing it again
+    returns the page to connect it, which is what :attr:`needs_connect` and
+    :meth:`connect_link` read.
     """
 
     actor = Actor.USER
 
+    def __init__(self, transport: MCPTransport, tools: list[GatewayTool]) -> None:
+        super().__init__(transport, tools)
+        self._pending = _read_pending(transport, tools)
+
     @property
     def needs_connect(self) -> list[str]:
         """The servers waiting for this person to connect (or reconnect) an account."""
-        return [_connect_label(tool) for tool in self.tools if _is_connect_tool(tool)]
+        return [server.name for server in self._pending]
 
-    def connect_link(self) -> ConnectLink | None:
-        """The page where this person connects every account still missing.
+    def refresh(self) -> list[GatewayTool]:
+        """Re-reads the surface: after the person installs a server, or connects one."""
+        tools = super().refresh()
+        self._pending = _read_pending(self._transport, tools)
+        return tools
 
-        None when nothing is. The link expires, so it is minted when it is about
-        to be shown; after the person connects, :meth:`refresh` brings the
-        server's tools onto the surface.
+    def connect_link(self, server: str | None = None) -> ConnectLink | None:
+        """The page where this person connects a server still missing.
+
+        ``server`` is one of :attr:`needs_connect` (its code works too); without
+        it, the first. None when nothing is waiting. Each server has its own
+        page. The link expires, so it is minted when it is about to be shown;
+        after the person connects, :meth:`refresh` brings the server's tools
+        onto the surface.
         """
-        tool = next((tool for tool in self.tools if _is_connect_tool(tool)), None)
-        if tool is None:
+        pending = self._pending
+        if server is not None:
+            pending = [p for p in pending if server in (p.name, p.code)]
+            if not pending:
+                raise TrustGateError(
+                    f"{server} is not waiting to be connected; "
+                    f"these are: {', '.join(self.needs_connect) or 'none'}",
+                    code="nothing_to_connect",
+                )
+        if not pending:
             return None
-        result = self._transport.call_tool(tool.name, {})
+        result = self._transport.call_tool(INSTALL_TOOL, {"code": pending[0].code})
         structured = result.get("structuredContent")
         offered = str(structured.get("connect_url") or "") if isinstance(structured, dict) else ""
         if not offered:
@@ -255,7 +288,7 @@ class UserAgent(_ToolSurface):
         url = gateway_connect_url(offered, self._transport.url)
         if url is None:
             raise TrustGateError(
-                f"{tool.name} answered with a link that is not this gateway's, "
+                f"{INSTALL_TOOL} answered with a link that is not this gateway's, "
                 "so it was not passed on",
                 code="untrusted_connect_url",
             )
@@ -267,15 +300,28 @@ class UserAgent(_ToolSurface):
         )
 
 
-def _is_connect_tool(tool: GatewayTool) -> bool:
-    return tool.name.startswith(CONNECT_TOOL_PREFIX)
+def _read_pending(transport: MCPTransport, tools: list[GatewayTool]) -> list[_PendingServer]:
+    """The servers the Store says are waiting on this person, and connectable.
 
-
-def _connect_label(tool: GatewayTool) -> str:
-    title = (tool.title or "").strip()
-    if title.startswith("Connect "):
-        return title[len("Connect ") :]
-    return tool.name[len(CONNECT_TOOL_PREFIX) :]
+    Read from the inventory, which names install as the way to connect each
+    one. A server the person cannot connect themselves (an account an admin
+    holds for everyone) carries no such pointer and is left out. A Store
+    without the inventory has nothing to say, and neither does this.
+    """
+    if not any(tool.name == INVENTORY_TOOL for tool in tools):
+        return []
+    result = transport.call_tool(INVENTORY_TOOL, {})
+    structured = result.get("structuredContent")
+    servers = structured.get("servers") if isinstance(structured, dict) else None
+    pending: list[_PendingServer] = []
+    for server in servers if isinstance(servers, list) else []:
+        if not isinstance(server, dict) or server.get("state") != "needs_connect":
+            continue
+        code = str(server.get("code") or "")
+        if server.get("connect_tool") != INSTALL_TOOL or not code:
+            continue
+        pending.append(_PendingServer(name=str(server.get("name") or code), code=code))
+    return pending
 
 
 def end_user_agent(

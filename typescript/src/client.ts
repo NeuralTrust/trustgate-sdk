@@ -454,8 +454,9 @@ export class TrustGateUser {
 	 * Opens this person's Store and checks the tools the agent needs are on it.
 	 *
 	 * A server whose account the person has not connected yet is not on the
-	 * surface; {@link UserAgent.needsConnect} names those and
-	 * {@link UserAgent.connectLink} is the page to connect them.
+	 * surface; {@link UserAgent.needsConnect} names those (read from the
+	 * Store's inventory) and {@link UserAgent.connectLink} is the page to
+	 * connect each one.
 	 */
 	async connect(options: ConnectOptions = {}): Promise<UserAgent> {
 		const url = await this.storeUrl(options.signal)
@@ -480,7 +481,7 @@ export class TrustGateUser {
 				'Install them from the Store, or ask an admin to grant them in Access.'
 			)
 		}
-		return new UserAgent(transport, tools)
+		return UserAgent.open(transport, tools, options.signal)
 	}
 }
 

@@ -111,7 +111,7 @@ take the key:
 const user = await TrustGate.login({ url: 'https://acme.mcp.neuraltrust.ai/store/mcp' })
 const me = await user.connect()
 
-if (me.needsConnect.length) console.log('Connect:', (await me.connectLink())?.connectUrl)
+for (const server of me.needsConnect) console.log(`Connect ${server}:`, (await me.connectLink(server))?.connectUrl)
 const { tools, execute } = me.toolkit(ToolFormat.OpenAIResponses)
 ```
 

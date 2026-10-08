@@ -22,10 +22,18 @@ type StoreOptions = {
 	callback?: Record<string, string>
 	/** Overrides the token endpoint the metadata names. */
 	tokenEndpoint?: string
-	/** Overrides the link the connect tool answers with. */
+	/** The servers trustgate_list_tools reports. */
+	inventory?: Record<string, unknown>[]
+	/** Overrides the link install answers with. */
 	connectUrl?: string
 	/** Answers the metadata request with a redirect instead. */
 	metadataMoved?: boolean
+}
+
+const INVENTORY = { name: 'trustgate_list_tools', inputSchema: { type: 'object' } }
+
+function linearWaiting(extra: Record<string, unknown> = {}): Record<string, unknown> {
+	return { name: 'Linear', code: 'app.linear/mcp', state: 'needs_connect', connect_tool: 'trustgate_store_install', ...extra }
 }
 
 /** The gateway's sign-in endpoints and its Store, as a fetch. */
@@ -37,6 +45,8 @@ function fakeStore(options: StoreOptions = {}) {
 	const authorized: Record<string, string>[] = []
 	const tokenRequests: Record<string, string>[] = []
 	const mcpAuth: string[] = []
+	const calls: [string, Record<string, unknown>][] = []
+	const state = { inventory: options.inventory ?? [] }
 	let challenge = ''
 
 	const json = (status: number, body: unknown) =>
@@ -84,15 +94,20 @@ function fakeStore(options: StoreOptions = {}) {
 				const rpc = JSON.parse(String(init?.body))
 				if (rpc.method === 'tools/list') return json(200, { jsonrpc: '2.0', id: rpc.id, result: { tools } })
 				const name = rpc.params.name as string
-				const result = name.startsWith('trustgate_connect_')
-					? {
-							content: [{ type: 'text', text: 'open it' }],
-							structuredContent: {
-								connect_url: options.connectUrl ?? 'https://acme.mcp.test/store/mcp/connect?ticket=tk-9',
-								action: 'user_confirmation_required',
-							},
-						}
-					: { content: [{ type: 'text', text: `called ${name}` }] }
+				calls.push([name, rpc.params.arguments ?? {}])
+				const result =
+					name === 'trustgate_list_tools'
+						? { content: [{ type: 'text', text: 'the list' }], structuredContent: { servers: state.inventory } }
+						: name === 'trustgate_store_install'
+							? {
+									content: [{ type: 'text', text: 'open it' }],
+									structuredContent: {
+										already_installed: true,
+										requires_auth: true,
+										connect_url: options.connectUrl ?? 'https://acme.mcp.test/store/mcp/connect?ticket=tk-9',
+									},
+								}
+							: { content: [{ type: 'text', text: `called ${name}` }] }
 				return json(200, { jsonrpc: '2.0', id: rpc.id, result })
 			}
 		}
@@ -109,7 +124,7 @@ function fakeStore(options: StoreOptions = {}) {
 		expect(page.status).toBe(200)
 	}
 
-	return { fetch: fetchImpl, browser, registered, authorized, tokenRequests, mcpAuth }
+	return { fetch: fetchImpl, browser, registered, authorized, tokenRequests, mcpAuth, calls, state }
 }
 
 function login(store: ReturnType<typeof fakeStore>, cache = new MemoryTokenCache()) {
@@ -227,10 +242,8 @@ describe('signed-in user', () => {
 
 	it('names the servers waiting on an account and the page to connect them', async () => {
 		const store = fakeStore({
-			tools: [
-				{ name: 'notion_search', inputSchema: { type: 'object' } },
-				{ name: 'trustgate_connect_linear', title: 'Connect Linear', inputSchema: { type: 'object' } },
-			],
+			tools: [{ name: 'notion_search', inputSchema: { type: 'object' } }, INVENTORY],
+			inventory: [{ name: 'Notion', code: 'com.notion/mcp', state: 'ready' }, linearWaiting()],
 		})
 
 		const agent = await (await login(store)).connect()
@@ -239,6 +252,45 @@ describe('signed-in user', () => {
 		expect(agent.needsConnect).toEqual(['Linear'])
 		expect(link?.connectUrl).toBe('https://acme.mcp.test/store/mcp/connect?ticket=tk-9')
 		expect(link?.ticket).toBe('tk-9')
+		// The Store connects an installed server by installing it again.
+		expect(store.calls.at(-1)).toEqual(['trustgate_store_install', { code: 'app.linear/mcp' }])
+	})
+
+	it('links the server it is asked for', async () => {
+		const store = fakeStore({
+			tools: [INVENTORY],
+			inventory: [linearWaiting(), linearWaiting({ name: 'Notion', code: 'com.notion/mcp' })],
+		})
+		const agent = await (await login(store)).connect()
+
+		await agent.connectLink('Notion')
+
+		expect(store.calls.at(-1)).toEqual(['trustgate_store_install', { code: 'com.notion/mcp' }])
+		await expect(agent.connectLink('GitHub')).rejects.toMatchObject({ code: 'nothing_to_connect' })
+	})
+
+	it('leaves out a server the person cannot connect', async () => {
+		// An account an admin holds for everyone has no connect pointer.
+		const store = fakeStore({
+			tools: [INVENTORY],
+			inventory: [{ name: 'Vanta', code: 'com.vanta/mcp', state: 'needs_connect', cause: 'shared_account_not_connected' }],
+		})
+
+		const agent = await (await login(store)).connect()
+
+		expect(agent.needsConnect).toEqual([])
+		expect(await agent.connectLink()).toBeUndefined()
+	})
+
+	it('reads what is still waiting on refresh', async () => {
+		const store = fakeStore({ tools: [INVENTORY], inventory: [linearWaiting()] })
+		const agent = await (await login(store)).connect()
+		expect(agent.needsConnect).toEqual(['Linear'])
+
+		store.state.inventory = [linearWaiting({ state: 'ready' })]
+		await agent.refresh()
+
+		expect(agent.needsConnect).toEqual([])
 	})
 
 	it('has no link when everything is connected', async () => {
@@ -300,7 +352,8 @@ describe('signed-in user', () => {
 
 	it('does not pass on a connect link that is not the gateway\'s', async () => {
 		const store = fakeStore({
-			tools: [{ name: 'trustgate_connect_linear', title: 'Connect Linear', inputSchema: { type: 'object' } }],
+			tools: [INVENTORY],
+			inventory: [linearWaiting()],
 			connectUrl: 'https://login.example/connect?ticket=tk-9',
 		})
 		const agent = await (await login(store)).connect()
