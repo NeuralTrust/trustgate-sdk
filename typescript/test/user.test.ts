@@ -20,6 +20,12 @@ type StoreOptions = {
 	refreshable?: Record<string, string>
 	/** Overrides what the browser comes back with; `state` is filled in when left out. */
 	callback?: Record<string, string>
+	/** Overrides the token endpoint the metadata names. */
+	tokenEndpoint?: string
+	/** Overrides the link the connect tool answers with. */
+	connectUrl?: string
+	/** Answers the metadata request with a redirect instead. */
+	metadataMoved?: boolean
 }
 
 /** The gateway's sign-in endpoints and its Store, as a fetch. */
@@ -41,10 +47,13 @@ function fakeStore(options: StoreOptions = {}) {
 		const headers = (init?.headers ?? {}) as Record<string, string>
 		switch (url.pathname) {
 			case '/.well-known/oauth-authorization-server':
+				if (options.metadataMoved) {
+					return new Response(null, { status: 302, headers: { Location: 'https://elsewhere.test/meta' } })
+				}
 				return json(200, {
 					issuer: 'https://acme.mcp.test',
 					authorization_endpoint: 'https://acme.mcp.test/oauth/authorize',
-					token_endpoint: 'https://acme.mcp.test/oauth/token',
+					token_endpoint: options.tokenEndpoint ?? 'https://acme.mcp.test/oauth/token',
 					registration_endpoint: 'https://acme.mcp.test/oauth/register',
 				})
 			case '/oauth/register': {
@@ -79,7 +88,7 @@ function fakeStore(options: StoreOptions = {}) {
 					? {
 							content: [{ type: 'text', text: 'open it' }],
 							structuredContent: {
-								connect_url: 'https://acme.mcp.test/store/mcp/connect?ticket=tk-9',
+								connect_url: options.connectUrl ?? 'https://acme.mcp.test/store/mcp/connect?ticket=tk-9',
 								action: 'user_confirmation_required',
 							},
 						}
@@ -263,6 +272,40 @@ describe('signed-in user', () => {
 		expect(resolveStoreUrl('https://acme.mcp.test')).toBe(STORE)
 		expect(resolveStoreUrl('https://acme.mcp.test/')).toBe(STORE)
 		expect(resolveStoreUrl(`${STORE}/`)).toBe(STORE)
+	})
+
+	it('refuses a Store on another host over plain http', () => {
+		expect(() => resolveStoreUrl('http://acme.mcp.test')).toThrow(/plain http/)
+		expect(resolveStoreUrl('http://127.0.0.1:8082')).toBe('http://127.0.0.1:8082/store/mcp')
+		expect(resolveStoreUrl('http://acme.mcp.test', true)).toBe('http://acme.mcp.test/store/mcp')
+	})
+
+	// The metadata decides where the code, the PKCE verifier and later the
+	// refresh token are sent.
+	it('refuses metadata that would send the sign-in over plain http', async () => {
+		const store = fakeStore({ tokenEndpoint: 'http://acme.mcp.test/oauth/token' })
+
+		await expect(login(store)).rejects.toThrow(/token endpoint is plain http/)
+		expect(store.tokenRequests).toEqual([])
+	})
+
+	it('signs in at the conventional paths when the metadata has moved', async () => {
+		const store = fakeStore({ metadataMoved: true })
+
+		const agent = await (await login(store)).connect()
+
+		expect(agent.tools.map((t) => t.name)).toEqual(['linear_list_issues'])
+		expect(store.tokenRequests[0].grant_type).toBe('authorization_code')
+	})
+
+	it('does not pass on a connect link that is not the gateway\'s', async () => {
+		const store = fakeStore({
+			tools: [{ name: 'trustgate_connect_linear', title: 'Connect Linear', inputSchema: { type: 'object' } }],
+			connectUrl: 'https://login.example/connect?ticket=tk-9',
+		})
+		const agent = await (await login(store)).connect()
+
+		await expect(agent.connectLink()).rejects.toMatchObject({ code: 'untrusted_connect_url' })
 	})
 
 	it('keeps sessions in a file only its owner reads, in the shape Python reads', async () => {

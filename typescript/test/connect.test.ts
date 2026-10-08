@@ -439,7 +439,7 @@ describe('accounts the caller cannot connect', () => {
 				notion_search: {
 					code: -32003,
 					message: 'user consent required',
-					data: { provider: 'com.notion/mcp', connect_url: 'https://gw.test/c?t=1' },
+					data: { provider: 'com.notion/mcp', connect_url: 'https://gw.test/acme/mcp/connect?ticket=t-1' },
 				},
 			},
 		})
@@ -449,7 +449,7 @@ describe('accounts the caller cannot connect', () => {
 		const error = await alice.callTool('notion_search', {}).catch((e) => e)
 
 		expect(error).toBeInstanceOf(ConsentRequiredError)
-		expect(error.connectUrl).toBe('https://gw.test/c?t=1')
+		expect(error.connectUrl).toBe('https://gw.test/acme/mcp/connect?ticket=t-1')
 	})
 
 	it('gives throttling and an unavailable gateway their own types', async () => {

@@ -1,8 +1,8 @@
-import { END_USER_HEADER, type ResolvedConfig } from './config.js'
+import { END_USER_HEADER, maskedWhenPrinted, type ResolvedConfig } from './config.js'
 import { createConnectLink, listConnections, requireEndUser } from './connections.js'
-import { ToolNotFoundError } from './errors.js'
+import { ToolNotFoundError, TrustGateError } from './errors.js'
 import { adapterFor, restoreArguments, type ConversionWarning, type ToolResult } from './formats.js'
-import { MCPTransport } from './mcp.js'
+import { MCPTransport, gatewayConnectUrl } from './mcp.js'
 import {
 	Actor,
 	ToolFormat,
@@ -74,11 +74,21 @@ export class Toolkit<Tool = unknown, Output = unknown> {
 	 *
 	 * Every call goes to the gateway, so the policy, the audit trail and the
 	 * upstream credentials stay where they were. The caller's process only
-	 * decides whether to make the call at all.
+	 * decides whether to make the call at all — and it makes none for a tool
+	 * this toolkit was not built with: a model can name a tool it was never
+	 * offered, and a toolkit narrowed by hand only means something if this
+	 * holds to it. Narrow `agent.tools` before calling `toolkit()`: this checks
+	 * against the tools it was built with. The gateway still applies its own
+	 * policy to every call.
 	 */
 	async execute(output: unknown, signal?: AbortSignal): Promise<Output[]> {
 		const adapter = adapterFor(this.format)
 		const calls = adapter.extractCalls(output)
+		for (const call of calls) {
+			if (!this.originals.has(call.name)) {
+				throw new ToolNotFoundError(call.name, `the model asked for "${call.name}", which is not in this toolkit`)
+			}
+		}
 		const results: ToolResult[] = []
 		for (const call of calls) {
 			const args = restoreArguments(call.arguments, this.originals.get(call.name))
@@ -99,9 +109,11 @@ export class Toolkit<Tool = unknown, Output = unknown> {
  */
 export class Agent {
 	readonly actor = Actor.Application
+	// Runtime-private: it holds the key, and a logged agent must not.
+	readonly #config: ResolvedConfig
 
 	constructor(
-		private readonly config: ResolvedConfig,
+		config: ResolvedConfig,
 		readonly slug: string,
 		private readonly transport: MCPTransport,
 		/** The tools this consumer serves, as the gateway named them. */
@@ -110,11 +122,13 @@ export class Agent {
 		readonly missing: string[],
 		/** The application's own upstream accounts, as of `connect()`. */
 		readonly connections: Connection[]
-	) {}
+	) {
+		this.#config = config
+	}
 
 	/** URL and headers for a framework that brings its own MCP client. */
 	get mcp(): Endpoint {
-		return { url: this.transport.url, headers: this.transport.headers }
+		return maskedWhenPrinted<Endpoint>({ url: this.transport.url, headers: this.transport.headers }, ['headers'])
 	}
 
 	/**
@@ -169,7 +183,7 @@ export class Agent {
 
 	/** What the application still owes before it can call every server. */
 	async refreshConnections(signal?: AbortSignal): Promise<Connection[]> {
-		return listConnections(this.config, this.slug, undefined, signal)
+		return listConnections(this.#config, this.slug, undefined, signal)
 	}
 
 	/**
@@ -180,7 +194,7 @@ export class Agent {
 	 * one header, and with it whose upstream account the gateway reaches for.
 	 */
 	forEndUser(endUser: string): EndUserAgent {
-		return endUserAgent(this.config, this.slug, endUser, this.transport.url, this.tools)
+		return endUserAgent(this.#config, this.slug, endUser, this.transport.url, this.tools)
 	}
 }
 
@@ -193,17 +207,20 @@ export class Agent {
  */
 export class EndUserAgent {
 	readonly actor = Actor.EndUser
+	readonly #config: ResolvedConfig
 
 	constructor(
-		private readonly config: ResolvedConfig,
+		config: ResolvedConfig,
 		readonly slug: string,
 		readonly endUser: string,
 		private readonly transport: MCPTransport,
 		public tools: GatewayTool[]
-	) {}
+	) {
+		this.#config = config
+	}
 
 	get mcp(): Endpoint {
-		return { url: this.transport.url, headers: this.transport.headers }
+		return maskedWhenPrinted<Endpoint>({ url: this.transport.url, headers: this.transport.headers }, ['headers'])
 	}
 
 	toolkit<Tool = unknown, Output = unknown>(
@@ -237,7 +254,7 @@ export class EndUserAgent {
 
 	/** Which servers this user has connected, and which they have not. */
 	async connections(signal?: AbortSignal): Promise<Connection[]> {
-		return listConnections(this.config, this.slug, this.endUser, signal)
+		return listConnections(this.#config, this.slug, this.endUser, signal)
 	}
 
 	/**
@@ -252,7 +269,7 @@ export class EndUserAgent {
 	 */
 	async connectLink(target?: string | ConnectTarget, signal?: AbortSignal): Promise<ConnectLink> {
 		const resolved = typeof target === 'string' ? { provider: target } : (target ?? {})
-		return createConnectLink(this.config, this.slug, this.endUser, resolved, signal)
+		return createConnectLink(this.#config, this.slug, this.endUser, resolved, signal)
 	}
 }
 
@@ -287,7 +304,7 @@ export class UserAgent {
 	 * keeps headers longer than that has to read this again.
 	 */
 	get mcp(): Endpoint {
-		return { url: this.transport.url, headers: this.transport.headers }
+		return maskedWhenPrinted<Endpoint>({ url: this.transport.url, headers: this.transport.headers }, ['headers'])
 	}
 
 	toolkit<Tool = unknown, Output = unknown>(
@@ -332,8 +349,14 @@ export class UserAgent {
 		if (!tool) return undefined
 		const result = await this.transport.callTool(tool.name, {}, signal)
 		const structured = result.structuredContent as Record<string, unknown> | undefined
-		const connectUrl = typeof structured?.connect_url === 'string' ? structured.connect_url : ''
-		if (!connectUrl) return undefined
+		const offered = typeof structured?.connect_url === 'string' ? structured.connect_url : ''
+		if (!offered) return undefined
+		const connectUrl = gatewayConnectUrl(offered, this.transport.url)
+		if (!connectUrl) {
+			throw new TrustGateError(`${tool.name} answered with a link that is not this gateway's, so it was not passed on`, {
+				code: 'untrusted_connect_url',
+			})
+		}
 		return {
 			connectUrl,
 			ticket: new URL(connectUrl).searchParams.get('ticket') ?? '',

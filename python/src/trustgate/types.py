@@ -82,7 +82,8 @@ class Endpoint:
     """Everything a provider's client needs to reach the gateway."""
 
     url: str
-    headers: dict[str, str]
+    # Out of the repr: it carries the key or the session token.
+    headers: dict[str, str] = field(repr=False)
 
 
 @dataclass(frozen=True)

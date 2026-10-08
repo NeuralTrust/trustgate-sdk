@@ -12,7 +12,7 @@ import {
 	TrustGateServerError,
 	UpstreamNotConnectedError,
 } from './errors.js'
-import { retryAfterMs } from './http.js'
+import { retryAfterMs, send, type Sent } from './http.js'
 import type { GatewayTool, JSONSchema } from './types.js'
 
 /** JSON-RPC codes the gateway answers with, beyond the standard four. */
@@ -51,17 +51,24 @@ type RPCResponse = { id?: unknown; result?: Record<string, unknown>; error?: RPC
  */
 export class MCPTransport {
 	private nextId = 1
+	// Runtime-private, not just TypeScript-private: these hold the key or the
+	// session, and a logged or serialised transport must not carry either.
+	readonly #config: ResolvedConfig
+	readonly #credentials?: Credentials
 
 	constructor(
-		private readonly config: ResolvedConfig,
+		config: ResolvedConfig,
 		readonly url: string,
 		private readonly extraHeaders: Record<string, string> = {},
-		private readonly credentials?: Credentials
-	) {}
+		credentials?: Credentials
+	) {
+		this.#config = config
+		this.#credentials = credentials
+	}
 
 	get headers(): Record<string, string> {
-		if (this.credentials) return { ...this.credentials.headersNow(), ...this.extraHeaders }
-		return { [API_KEY_HEADER]: this.config.apiKey, ...this.extraHeaders }
+		if (this.#credentials) return { ...this.#credentials.headersNow(), ...this.extraHeaders }
+		return { [API_KEY_HEADER]: this.#config.apiKey, ...this.extraHeaders }
 	}
 
 	async listTools(signal?: AbortSignal): Promise<GatewayTool[]> {
@@ -104,41 +111,39 @@ export class MCPTransport {
 	): Promise<Record<string, unknown>> {
 		const id = this.nextId++
 		const body = JSON.stringify({ jsonrpc: '2.0', id, method, params })
-		let response = await this.post(method, body, signal)
+		let sent = await this.post(method, body, signal)
 		// A session token can be refused before its own expiry says so (the
 		// clock here is not the gateway's); one renewal, one retry.
-		if (response.status === 401 && this.credentials && (await this.credentials.renew())) {
-			response = await this.post(method, body, signal)
+		if (sent.response.status === 401 && this.#credentials && (await this.#credentials.renew())) {
+			sent = await this.post(method, body, signal)
 		}
 
+		const { response, text } = sent
 		if (response.status === 401 || response.status === 403) {
-			const refused = this.credentials ? 'this sign-in' : 'this API key'
-			throw new AuthenticationError(
-				`the gateway refused ${refused} for ${this.url}${whatItSaid(await response.text())}`,
-				{ status: response.status }
-			)
+			const refused = this.#credentials ? 'this sign-in' : 'this API key'
+			throw new AuthenticationError(`the gateway refused ${refused} for ${this.url}${whatItSaid(text)}`, {
+				status: response.status,
+			})
 		}
-		const text = await response.text()
 		const rpc = parseRPCResponse(text, id)
 		if (!rpc) {
 			throw new TrustGateError(
-				`MCP ${method} returned no JSON-RPC response (HTTP ${response.status})` +
-					whatItSaid(text),
+				`MCP ${method} returned no JSON-RPC response (HTTP ${response.status})` + whatItSaid(text),
 				{ status: response.status }
 			)
 		}
-		if (rpc.error) throw errorForRPC(rpc.error, response)
+		if (rpc.error) throw errorForRPC(rpc.error, this.url, response)
 		return rpc.result ?? {}
 	}
 
-	private async post(method: string, body: string, signal?: AbortSignal): Promise<Response> {
-		const auth = this.credentials
-			? { ...(await this.credentials.headers()), ...this.extraHeaders }
+	private async post(method: string, body: string, signal?: AbortSignal): Promise<Sent> {
+		const auth = this.#credentials
+			? { ...(await this.#credentials.headers()), ...this.extraHeaders }
 			: this.headers
-		const controller = new AbortController()
-		const timeout = setTimeout(() => controller.abort(), this.config.timeoutMs)
-		try {
-			return await this.config.fetch(this.url, {
+		return send(
+			this.#config.fetch,
+			this.url,
+			{
 				method: 'POST',
 				headers: {
 					...auth,
@@ -148,13 +153,9 @@ export class MCPTransport {
 					Accept: 'application/json',
 				},
 				body,
-				signal: signal ?? controller.signal,
-			})
-		} catch (cause) {
-			throw new TrustGateError(`MCP ${method} failed to reach ${this.url}`, { cause })
-		} finally {
-			clearTimeout(timeout)
-		}
+			},
+			{ timeoutMs: this.#config.timeoutMs, signal, failure: `MCP ${method} failed to reach ${this.url}` }
+		)
 	}
 }
 
@@ -192,19 +193,26 @@ export function parseRPCResponse(text: string, id: number): RPCResponse | undefi
 /** The reason a -32003 carries when nobody on this call can connect the account. */
 const REASON_APPLICATION_NOT_CONNECTED = 'application_not_connected'
 
-function errorForRPC(error: RPCError, response?: Response): TrustGateError {
+function errorForRPC(error: RPCError, endpoint: string, response?: Response): TrustGateError {
 	const data = (error.data && typeof error.data === 'object' ? error.data : {}) as Record<string, unknown>
 	switch (error.code) {
-		case CODE_CONSENT_REQUIRED:
+		case CODE_CONSENT_REQUIRED: {
 			if (notConnectableHere(data)) {
 				return new UpstreamNotConnectedError([upstreamFrom(data, error.message)])
 			}
-			return new ConsentRequiredError(
-				String(data.provider ?? 'this provider'),
-				String(data.connect_url ?? ''),
-				String(data.cause ?? ''),
-				error.message
-			)
+			const provider = String(data.provider ?? 'this provider')
+			const connectUrl = gatewayConnectUrl(String(data.connect_url ?? ''), endpoint)
+			if (!connectUrl) {
+				return new TrustGateError(
+					`a consent prompt for ${provider} came back with a link that is not this gateway's ` +
+						`(${new URL(endpoint).origin}), so it was not passed on`,
+					{ code: 'untrusted_connect_url' }
+				)
+			}
+			// The gateway's own message quotes the link, ticket included; the
+			// SDK writes its own so the ticket does not end up in a log.
+			return new ConsentRequiredError(provider, connectUrl, String(data.cause ?? ''))
+		}
 		case CODE_POLICY_BLOCKED:
 			return new PolicyBlockedError(error.message, { code: String(error.code) })
 		case CODE_RATE_LIMITED:
@@ -234,6 +242,38 @@ function errorForRPC(error: RPCError, response?: Response): TrustGateError {
 function notConnectableHere(data: Record<string, unknown>): boolean {
 	if (data.reason === REASON_APPLICATION_NOT_CONNECTED) return true
 	return !String(data.connect_url ?? '').trim()
+}
+
+/**
+ * The connect link, when it is one this gateway minted; undefined otherwise.
+ *
+ * The gateway relays errors from the servers behind it, so the code alone does
+ * not say who wrote the link, and it is a page the SDK tells the caller to put
+ * in front of a person. The gateway builds it from the endpoint the call went
+ * to, `<endpoint origin>/<consumer>/mcp/connect?ticket=…`, so a link on any
+ * other host or port, to another page, or with credentials in it, is not
+ * passed on.
+ *
+ * A gateway behind a proxy that does not forward the scheme writes `http://`
+ * for its own https host. The SDK just reached that host over https, so the
+ * link is upgraded rather than refused — the ticket never goes out in clear.
+ */
+export function gatewayConnectUrl(link: string, endpoint: string): string | undefined {
+	let parsed: URL
+	let base: URL
+	try {
+		parsed = new URL(link)
+		base = new URL(endpoint)
+	} catch {
+		return undefined
+	}
+	if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return undefined
+	if (parsed.username || parsed.password) return undefined
+	if (parsed.hostname !== base.hostname || parsed.port !== base.port) return undefined
+	if (!parsed.pathname.replace(/\/+$/, '').endsWith('/mcp/connect')) return undefined
+	if (!parsed.searchParams.get('ticket')) return undefined
+	if (base.protocol === 'https:') parsed.protocol = 'https:'
+	return parsed.toString()
 }
 
 /** The blocked server, as much of it as the error names. */

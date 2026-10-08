@@ -8,8 +8,9 @@ from urllib.parse import parse_qs, urlparse
 
 from .config import END_USER_HEADER, Config
 from .connections import create_connect_link, list_connections, require_end_user
+from .errors import ToolNotFoundError, TrustGateError
 from .formats import ConversionWarning, ToolResult, adapter_for, restore_arguments
-from .mcp import MCPTransport
+from .mcp import MCPTransport, gateway_connect_url
 from .schema import Schema
 from .transport import Transport
 from .types import (
@@ -56,11 +57,22 @@ class Toolkit:
 
         Every call goes to the gateway, so the policy, the audit trail and the
         upstream credentials stay where they were. The caller's process only
-        decides whether to make the call at all.
+        decides whether to make the call at all - and it makes none for a tool
+        this toolkit was not built with: a model can name a tool it was never
+        offered, and a toolkit narrowed by hand only means something if this
+        holds to it. Narrow ``agent.tools`` before calling ``toolkit()``: this
+        checks against the tools it was built with. The gateway still applies
+        its own policy to every call.
         """
         adapter = adapter_for(self._format)
+        calls = adapter.extract_calls(output)
+        for call in calls:
+            if call.name not in self._originals:
+                raise ToolNotFoundError(
+                    call.name, f'the model asked for "{call.name}", which is not in this toolkit'
+                )
         results = []
-        for call in adapter.extract_calls(output):
+        for call in calls:
             arguments = restore_arguments(call.arguments, self._originals.get(call.name))
             result = self._transport.call_tool(call.name, arguments)
             results.append(ToolResult(call=call, result=result))
@@ -237,9 +249,16 @@ class UserAgent(_ToolSurface):
             return None
         result = self._transport.call_tool(tool.name, {})
         structured = result.get("structuredContent")
-        url = str(structured.get("connect_url") or "") if isinstance(structured, dict) else ""
-        if not url:
+        offered = str(structured.get("connect_url") or "") if isinstance(structured, dict) else ""
+        if not offered:
             return None
+        url = gateway_connect_url(offered, self._transport.url)
+        if url is None:
+            raise TrustGateError(
+                f"{tool.name} answered with a link that is not this gateway's, "
+                "so it was not passed on",
+                code="untrusted_connect_url",
+            )
         ticket = parse_qs(urlparse(url).query).get("ticket", [""])[0]
         return ConnectLink(
             connect_url=url,

@@ -77,7 +77,10 @@ applications it reaches and where each is served, and from then on talks only
 to those addresses. Pass `baseUrl` only for a Hybrid gateway: only its own
 data plane serves it, so point `baseUrl` at the MCP host that plane is published
 on, which answers the same question itself. A Hybrid key sent to the cloud is
-refused with that advice. Name a
+refused with that advice. The key travels in a header, so a plain `http://`
+address is refused unless it is this machine; a Hybrid data plane reached over
+a private network can opt in with `allowInsecureHttp`
+(`TRUSTGATE_ALLOW_INSECURE_HTTP=1`). Name a
 slug only when a key reaches two applications on the same plane, which the SDK
 will not guess at.
 
@@ -139,6 +142,9 @@ try {
 ```
 
 The link arrives inside the error, because that is where the gateway mints it.
+The SDK checks it is a page on the gateway the call went to before handing it
+over, and fails the call instead when it is not. The link carries a ticket, so
+it is on `connectUrl` and never in the error's message.
 `alice.connections()` and `alice.connectLink()` do the same thing ahead of
 time, when you would rather ask than fail.
 

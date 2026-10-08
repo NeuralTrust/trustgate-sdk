@@ -5,6 +5,7 @@ import json
 import pytest
 
 from trustgate import inline_refs, strip_injected_nulls, to_strict
+from trustgate.schema import MAX_INLINED_NODES, MAX_SCHEMA_DEPTH
 
 
 def test_inline_refs_replaces_a_local_reference() -> None:
@@ -135,3 +136,50 @@ def test_strip_injected_nulls_reaches_into_nested_objects_and_arrays() -> None:
     )
 
     assert out == {"filter": {}, "items": [{"id": "a"}, {}]}
+
+
+def _doubling(depth: int) -> dict:
+    """Each level names the one below twice: 2**depth copies once inlined."""
+    defs: dict = {"L0": {"type": "string"}}
+    for level in range(1, depth + 1):
+        below = {"$ref": f"#/$defs/L{level - 1}"}
+        defs[f"L{level}"] = {"type": "object", "properties": {"a": below, "b": dict(below)}}
+    return {"type": "object", "properties": {"root": {"$ref": f"#/$defs/L{depth}"}}, "$defs": defs}
+
+
+# Thirty levels is a few kilobytes of $defs and a billion nodes inlined.
+def test_a_schema_whose_references_multiply_is_left_as_written() -> None:
+    schema = _doubling(30)
+
+    assert inline_refs(schema) is schema
+
+
+def test_a_schema_whose_references_multiply_is_not_strict_and_says_why() -> None:
+    result = to_strict(_doubling(30))
+
+    assert result.strict is False
+    assert str(MAX_INLINED_NODES) in (result.reason or "")
+
+
+# No doubling needed: one long enum, referenced from many properties.
+def test_every_value_inlining_would_copy_counts_not_just_the_objects() -> None:
+    schema = {
+        "type": "object",
+        "properties": {f"p{i}": {"$ref": "#/$defs/Code"} for i in range(3_000)},
+        "$defs": {"Code": {"enum": list(range(100_000))}},
+    }
+
+    assert inline_refs(schema) is schema
+
+
+def test_a_schema_nested_too_deep_to_follow_is_left_as_written() -> None:
+    schema: dict = {"type": "string"}
+    for _ in range(MAX_SCHEMA_DEPTH * 10):
+        schema = {"type": "object", "properties": {"x": schema}}
+
+    assert inline_refs(schema) is schema
+    assert to_strict(schema).strict is False
+
+
+def test_a_schema_under_the_limit_is_still_inlined() -> None:
+    assert "$ref" not in json.dumps(inline_refs(_doubling(4)))
