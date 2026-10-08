@@ -31,6 +31,22 @@ class StrictResult:
     reason: str | None = None
 
 
+#: How many values inlining may produce for one schema, every string, number
+#: and enum entry included. Inlining copies a definition everywhere it is
+#: referenced: one referenced twice by one referenced twice doubles at each
+#: level, and a long enum referenced from many properties is copied whole each
+#: time, so a few kilobytes of ``$defs`` can expand into millions of values.
+#: Real tool schemas stay far below this; past it the schema is left as written.
+MAX_INLINED_NODES = 100_000
+
+#: How deep inlining follows a schema before leaving it as written.
+MAX_SCHEMA_DEPTH = 128
+
+
+class _TooLarge(Exception):
+    pass
+
+
 def inline_refs(schema: Schema) -> Schema:
     """Inlines local ``$ref``s.
 
@@ -38,15 +54,28 @@ def inline_refs(schema: Schema) -> Schema:
     separated from the strict pass because every provider needs it and none of
     them object to the result - which is why this is also the part that could
     one day move into the gateway.
+
+    A schema whose references would expand past :data:`MAX_INLINED_NODES` is
+    returned untouched, ``$defs`` and all, rather than half inlined.
     """
+    expanded = _expand_refs(schema)
+    return schema if expanded is None else expanded
+
+
+def _expand_refs(schema: Schema) -> Schema | None:
+    """The schema with its references inlined, or None when that would be too large."""
     defs: dict[str, Schema] = {}
     defs.update(schema.get("$defs") or {})
     defs.update(schema.get("definitions") or {})
     seen: set[str] = set()
+    budget = [MAX_INLINED_NODES]
 
-    def walk(node: Any) -> Any:
+    def walk(node: Any, depth: int) -> Any:
+        budget[0] -= 1
+        if budget[0] < 0 or depth > MAX_SCHEMA_DEPTH:
+            raise _TooLarge
         if isinstance(node, list):
-            return [walk(item) for item in node]
+            return [walk(item, depth + 1) for item in node]
         if not isinstance(node, dict):
             return node
         ref = node.get("$ref")
@@ -57,15 +86,20 @@ def inline_refs(schema: Schema) -> Schema:
             if target is not None and ref not in seen:
                 seen.add(ref)
                 merged = {**target, **{k: v for k, v in node.items() if k != "$ref"}}
-                resolved = walk(merged)
+                resolved = walk(merged, depth + 1)
                 seen.discard(ref)
                 return resolved
             return node
         return {
-            key: walk(value) for key, value in node.items() if key not in ("$defs", "definitions")
+            key: walk(value, depth + 1)
+            for key, value in node.items()
+            if key not in ("$defs", "definitions")
         }
 
-    return walk(schema)
+    try:
+        return walk(schema, 0)
+    except _TooLarge:
+        return None
 
 
 def _resolve(ref: str, defs: dict[str, Schema]) -> Schema | None:
@@ -84,7 +118,16 @@ def to_strict(schema: Schema) -> StrictResult:
     strict cannot say are returned untouched with ``strict=False``, because a
     tool the model can still call imperfectly beats a tool it cannot call at all.
     """
-    inlined = inline_refs(schema)
+    inlined = _expand_refs(schema)
+    if inlined is None:
+        return StrictResult(
+            schema=schema,
+            strict=False,
+            reason=(
+                f"it nests deeper than {MAX_SCHEMA_DEPTH} levels or its $refs expand past "
+                f"{MAX_INLINED_NODES} values, so it is sent as written"
+            ),
+        )
     reason: str | None = None
 
     def refuse(why: str) -> None:

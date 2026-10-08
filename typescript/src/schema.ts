@@ -23,22 +23,47 @@ export type StrictResult = {
 }
 
 /**
+ * How many values inlining may produce for one schema, every string, number
+ * and enum entry included.
+ *
+ * Inlining copies a definition everywhere it is referenced: a definition
+ * referenced twice by one referenced twice by another doubles at each level,
+ * and a long enum referenced from many properties is copied whole each time,
+ * so a few kilobytes of `$defs` can expand into millions of values. Real tool
+ * schemas stay far below this; past it the schema is left as written.
+ */
+export const MAX_INLINED_NODES = 100_000
+
+/** How deep inlining follows a schema before leaving it as written. */
+export const MAX_SCHEMA_DEPTH = 128
+
+/**
  * Inlines local `$ref`s.
  *
  * Nothing is lost: a reference and its target describe the same thing. It is
  * separated from the strict pass because every provider needs it and none of
  * them object to the result — which is why this is also the part that could
  * one day move into the gateway.
+ *
+ * A schema whose references would expand past {@link MAX_INLINED_NODES} is
+ * returned untouched, `$defs` and all, rather than half inlined.
  */
 export function inlineRefs(schema: JSONSchema): JSONSchema {
+	return expandRefs(schema) ?? schema
+}
+
+/** The schema with its references inlined, or undefined when that would be too large. */
+function expandRefs(schema: JSONSchema): JSONSchema | undefined {
 	const defs = {
 		...((schema.$defs as Record<string, JSONSchema>) ?? {}),
 		...((schema.definitions as Record<string, JSONSchema>) ?? {}),
 	}
 	const seen = new Set<string>()
+	let budget = MAX_INLINED_NODES
 
-	const walk = (node: unknown): unknown => {
-		if (Array.isArray(node)) return node.map(walk)
+	const walk = (node: unknown, depth: number): unknown => {
+		if (--budget < 0 || depth > MAX_SCHEMA_DEPTH) throw TOO_LARGE
+		if (Array.isArray(node)) return node.map((item) => walk(item, depth + 1))
 		if (!isObject(node)) return node
 		const ref = node.$ref
 		if (typeof ref === 'string') {
@@ -47,7 +72,7 @@ export function inlineRefs(schema: JSONSchema): JSONSchema {
 			// strict pass refuse the tool, which is better than looping.
 			if (target && !seen.has(ref)) {
 				seen.add(ref)
-				const resolved = walk({ ...target, ...omit(node, ['$ref']) })
+				const resolved = walk({ ...target, ...omit(node, ['$ref']) }, depth + 1)
 				seen.delete(ref)
 				return resolved
 			}
@@ -56,13 +81,20 @@ export function inlineRefs(schema: JSONSchema): JSONSchema {
 		const out: Record<string, unknown> = {}
 		for (const [key, value] of Object.entries(node)) {
 			if (key === '$defs' || key === 'definitions') continue
-			out[key] = walk(value)
+			out[key] = walk(value, depth + 1)
 		}
 		return out
 	}
 
-	return walk(schema) as JSONSchema
+	try {
+		return walk(schema, 0) as JSONSchema
+	} catch (error) {
+		if (error === TOO_LARGE) return undefined
+		throw error
+	}
 }
+
+const TOO_LARGE = Symbol('schema too large to inline')
 
 function resolveRef(ref: string, defs: Record<string, JSONSchema>): JSONSchema | undefined {
 	const match = /^#\/(?:\$defs|definitions)\/(.+)$/.exec(ref)
@@ -80,7 +112,14 @@ function resolveRef(ref: string, defs: Record<string, JSONSchema>): JSONSchema |
  * the model can still call imperfectly beats a tool it cannot call at all.
  */
 export function toStrict(schema: JSONSchema): StrictResult {
-	const inlined = inlineRefs(schema)
+	const inlined = expandRefs(schema)
+	if (!inlined) {
+		return {
+			schema,
+			strict: false,
+			reason: `it nests deeper than ${MAX_SCHEMA_DEPTH} levels or its $refs expand past ${MAX_INLINED_NODES} values, so it is sent as written`,
+		}
+	}
 	let reason: string | undefined
 
 	const walk = (node: unknown): unknown => {

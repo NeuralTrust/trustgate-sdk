@@ -12,7 +12,7 @@ from datetime import datetime
 
 from .config import API_KEY_HEADER, Config
 from .errors import PlaneUnavailableError, TrustGateError
-from .transport import Transport, error_for_response
+from .transport import Transport, error_for_response, send
 
 #: The code a plane answers with for a gateway it does not serve: a Hybrid one,
 #: which only its own data plane does.
@@ -80,7 +80,8 @@ class KeyIdentity:
 
 
 def who_am_i(config: Config, transport: Transport) -> KeyIdentity:
-    response = transport.request(
+    response = send(
+        transport,
         "GET",
         f"{config.base_url}/whoami",
         {API_KEY_HEADER: config.api_key, "Accept": "application/json"},

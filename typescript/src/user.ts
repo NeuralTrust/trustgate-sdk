@@ -12,7 +12,9 @@
  * Signing in through the browser, and keeping the session in a file, need
  * Node; a token you already hold works anywhere `fetch` does.
  */
+import { insecureHttpFromEnv, requireSafeUrl } from './config.js'
 import { AuthenticationError, LoginRequiredError, TrustGateError } from './errors.js'
+import { send as sendWithin } from './http.js'
 
 /** Where a gateway serves the Store, under the host of its MCP plane. */
 export const STORE_PATH = '/store/mcp'
@@ -135,7 +137,7 @@ export class FileTokenCache implements TokenCache {
  * The console's Store settings show `https://<gateway>.<mcp host>/store/mcp`.
  * The host alone is accepted too, because it is the part people copy.
  */
-export function resolveStoreUrl(url?: string): string {
+export function resolveStoreUrl(url?: string, allowInsecureHttp = insecureHttpFromEnv()): string {
 	const raw = url?.trim() || fromEnv('TRUSTGATE_STORE_URL')?.trim()
 	if (!raw) {
 		throw new TrustGateError(
@@ -143,22 +145,14 @@ export function resolveStoreUrl(url?: string): string {
 				'https://<gateway>.<mcp host>/store/mcp'
 		)
 	}
-	let parsed: URL
-	try {
-		parsed = new URL(raw)
-	} catch {
-		throw new TrustGateError(`url must be an http(s) URL, got "${raw}"`)
-	}
-	if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-		throw new TrustGateError(`url must be an http(s) URL, got "${raw}"`)
-	}
+	const parsed = requireSafeUrl(raw, allowInsecureHttp, 'url')
 	const path = parsed.pathname.replace(/\/+$/, '')
 	return `${parsed.origin}${path || STORE_PATH}`
 }
 
 type AuthServer = { authorizationEndpoint: string; tokenEndpoint: string; registrationEndpoint: string }
 
-type Http = { fetch: typeof globalThis.fetch; timeoutMs: number }
+type Http = { fetch: typeof globalThis.fetch; timeoutMs: number; allowInsecureHttp?: boolean }
 
 /**
  * The bearer the Store reads, renewed before it runs out.
@@ -170,33 +164,38 @@ type Http = { fetch: typeof globalThis.fetch; timeoutMs: number }
  */
 export class UserSession {
 	private renewing?: Promise<void>
+	// Runtime-private: the session token and its refresh token are a sign-in,
+	// and a logged session must not carry them.
+	#current: UserToken
 
 	constructor(
 		readonly url: string,
-		private current: UserToken,
+		current: UserToken,
 		private readonly http: Http,
 		private readonly cache?: TokenCache,
 		private readonly now: () => number = Date.now
-	) {}
+	) {
+		this.#current = current
+	}
 
 	get token(): UserToken {
-		return this.current
+		return this.#current
 	}
 
 	/** The header as it stands, for a framework that takes headers once. */
 	headersNow(): Record<string, string> {
-		return { Authorization: `Bearer ${this.current.accessToken}` }
+		return { Authorization: `Bearer ${this.#current.accessToken}` }
 	}
 
 	/** The header for the next call, renewing the token first when it is about to end. */
 	async headers(): Promise<Record<string, string>> {
-		if (expiresSoon(this.current, this.now()) && this.current.refreshToken) await this.renewOnce()
+		if (expiresSoon(this.#current, this.now()) && this.#current.refreshToken) await this.renewOnce()
 		return this.headersNow()
 	}
 
 	/** Renews after the Store refused the token. False when it cannot be. */
 	async renew(): Promise<boolean> {
-		if (!this.current.refreshToken) return false
+		if (!this.#current.refreshToken) return false
 		await this.renewOnce()
 		return true
 	}
@@ -213,17 +212,17 @@ export class UserSession {
 		const server = await discoverAuthServer(this.url, this.http)
 		const form: Record<string, string> = {
 			grant_type: 'refresh_token',
-			refresh_token: this.current.refreshToken ?? '',
+			refresh_token: this.#current.refreshToken ?? '',
 			resource: this.url,
 		}
-		if (this.current.clientId) form.client_id = this.current.clientId
+		if (this.#current.clientId) form.client_id = this.#current.clientId
 		const { status, body } = await postForm(server.tokenEndpoint, form, this.http)
 		if (status >= 400 || typeof body.access_token !== 'string') {
 			await this.cache?.clear(this.url)
 			throw new LoginRequiredError(this.url, oauthReason(body, status))
 		}
-		this.current = tokenFrom(body, this.current.clientId, this.now(), this.current)
-		await this.cache?.save(this.url, this.current)
+		this.#current = tokenFrom(body, this.#current.clientId, this.now(), this.#current)
+		await this.cache?.save(this.url, this.#current)
 	}
 }
 
@@ -240,14 +239,27 @@ export function expiresSoon(token: UserToken, now: number): boolean {
 async function discoverAuthServer(url: string, http: Http): Promise<AuthServer> {
 	const origin = new URL(url).origin
 	let meta: Record<string, unknown> = {}
-	const response = await send(http, `${origin}/.well-known/oauth-authorization-server`, {
-		headers: { Accept: 'application/json' },
-	})
-	if (response.ok) meta = asObject(safeParse(await response.text()))
+	try {
+		const { response, text } = await send(http, `${origin}/.well-known/oauth-authorization-server`, {
+			headers: { Accept: 'application/json' },
+		})
+		if (response.ok) meta = asObject(safeParse(text))
+	} catch (error) {
+		// Metadata that moved is metadata this gateway does not publish here;
+		// the conventional paths below are where it serves the endpoints.
+		if (!(error instanceof TrustGateError && error.code === 'redirect')) throw error
+	}
+	// The metadata names where the refresh token, the PKCE verifier and the
+	// browser go, so each address it gives has to be one they may be sent to.
+	const endpoint = (value: unknown, fallback: string, what: string): string => {
+		const chosen = stringOr(value, fallback)
+		requireSafeUrl(chosen, http.allowInsecureHttp ?? false, `the gateway's ${what}`)
+		return chosen
+	}
 	return {
-		authorizationEndpoint: stringOr(meta.authorization_endpoint, `${origin}/oauth/authorize`),
-		tokenEndpoint: stringOr(meta.token_endpoint, `${origin}/oauth/token`),
-		registrationEndpoint: stringOr(meta.registration_endpoint, `${origin}/oauth/register`),
+		authorizationEndpoint: endpoint(meta.authorization_endpoint, `${origin}/oauth/authorize`, 'authorization endpoint'),
+		tokenEndpoint: endpoint(meta.token_endpoint, `${origin}/oauth/token`, 'token endpoint'),
+		registrationEndpoint: endpoint(meta.registration_endpoint, `${origin}/oauth/register`, 'registration endpoint'),
 	}
 }
 
@@ -325,7 +337,7 @@ export async function loginFlow(url: string, http: Http, options: LoginFlowOptio
 }
 
 async function registerClient(server: AuthServer, redirectUri: string, http: Http): Promise<string> {
-	const response = await send(http, server.registrationEndpoint, {
+	const { response, text } = await send(http, server.registrationEndpoint, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
 		body: JSON.stringify({
@@ -336,7 +348,7 @@ async function registerClient(server: AuthServer, redirectUri: string, http: Htt
 			token_endpoint_auth_method: 'none',
 		}),
 	})
-	const body = asObject(safeParse(await response.text()))
+	const body = asObject(safeParse(text))
 	if (!response.ok || typeof body.client_id !== 'string' || !body.client_id) {
 		throw new AuthenticationError(
 			`this gateway does not let a client sign people in: ${oauthReason(body, response.status)}`,
@@ -351,24 +363,19 @@ async function postForm(
 	form: Record<string, string>,
 	http: Http
 ): Promise<{ status: number; body: Record<string, unknown> }> {
-	const response = await send(http, url, {
+	const { response, text } = await send(http, url, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
 		body: new URLSearchParams(form).toString(),
 	})
-	return { status: response.status, body: asObject(safeParse(await response.text())) }
+	return { status: response.status, body: asObject(safeParse(text)) }
 }
 
-async function send(http: Http, url: string, init: RequestInit): Promise<Response> {
-	const controller = new AbortController()
-	const timeout = setTimeout(() => controller.abort(), http.timeoutMs)
-	try {
-		return await http.fetch(url, { ...init, signal: controller.signal })
-	} catch (cause) {
-		throw new TrustGateError(`${init.method ?? 'GET'} ${url} failed to reach the gateway`, { cause })
-	} finally {
-		clearTimeout(timeout)
-	}
+function send(http: Http, url: string, init: RequestInit): ReturnType<typeof sendWithin> {
+	return sendWithin(http.fetch, url, init, {
+		timeoutMs: http.timeoutMs,
+		failure: `${init.method ?? 'GET'} ${url} failed to reach the gateway`,
+	})
 }
 
 function tokenFrom(
@@ -416,17 +423,25 @@ function printUrl(url: string): void {
 	process.stderr.write(`Sign in to TrustGate in your browser:\n\n    ${url}\n\n`)
 }
 
-/** Best effort: the printed URL is what a person without a browser here follows. */
-async function openInBrowser(url: string): Promise<void> {
+/**
+ * Best effort: the printed URL is what a person without a browser here follows.
+ *
+ * The URL goes to the browser as one argument and never through a shell. On
+ * Windows `cmd /c start` parses its arguments, so the `&` between query
+ * parameters splits the URL; `rundll32 url.dll,FileProtocolHandler` takes it
+ * whole, the way Go's and Rust's browser openers do.
+ */
+export async function openInBrowser(url: string): Promise<void> {
+	if (!/^https?:\/\//i.test(url)) return
 	try {
 		const { spawn } = await import('node:child_process')
 		const [command, args] =
 			process.platform === 'darwin'
 				? ['open', [url]]
 				: process.platform === 'win32'
-					? ['cmd', ['/c', 'start', '""', url.replace(/&/g, '^&')]]
+					? ['rundll32', ['url.dll,FileProtocolHandler', url]]
 					: ['xdg-open', [url]]
-		const child = spawn(command, args, { stdio: 'ignore', detached: true })
+		const child = spawn(command, args, { stdio: 'ignore', detached: true, shell: false })
 		child.on('error', () => undefined)
 		child.unref()
 	} catch {

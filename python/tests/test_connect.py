@@ -480,7 +480,10 @@ def test_a_consent_prompt_still_carries_its_link() -> None:
             "notion_search": {
                 "code": -32003,
                 "message": "user consent required",
-                "data": {"provider": "com.notion/mcp", "connect_url": "https://gw.test/c?t=1"},
+                "data": {
+                    "provider": "com.notion/mcp",
+                    "connect_url": "https://gw.test/acme/mcp/connect?ticket=t-1",
+                },
             }
         }
     )
@@ -488,7 +491,7 @@ def test_a_consent_prompt_still_carries_its_link() -> None:
     with pytest.raises(ConsentRequiredError) as caught:
         client(gateway).connect().for_end_user("user_123").call_tool("notion_search")
 
-    assert caught.value.connect_url == "https://gw.test/c?t=1"
+    assert caught.value.connect_url == "https://gw.test/acme/mcp/connect?ticket=t-1"
 
 
 def test_throttling_and_an_unavailable_gateway_have_their_own_types() -> None:

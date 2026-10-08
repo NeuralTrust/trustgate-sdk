@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { inlineRefs, stripInjectedNulls, toStrict } from '../src/schema.js'
+import { MAX_INLINED_NODES, MAX_SCHEMA_DEPTH, inlineRefs, stripInjectedNulls, toStrict } from '../src/schema.js'
 
 describe('inlineRefs', () => {
 	it('replaces a local reference with what it points at', () => {
@@ -26,6 +26,63 @@ describe('inlineRefs', () => {
 		})
 
 		expect(JSON.stringify(out)).toContain('$ref')
+	})
+})
+
+/** Each level names the one below twice: 2^depth copies once inlined. */
+function doubling(depth: number): Record<string, unknown> {
+	const defs: Record<string, unknown> = { L0: { type: 'string' } }
+	for (let level = 1; level <= depth; level++) {
+		defs[`L${level}`] = {
+			type: 'object',
+			properties: { a: { $ref: `#/$defs/L${level - 1}` }, b: { $ref: `#/$defs/L${level - 1}` } },
+		}
+	}
+	return { type: 'object', properties: { root: { $ref: `#/$defs/L${depth}` } }, $defs: defs }
+}
+
+describe('a schema whose references multiply', () => {
+	// Thirty levels is a few kilobytes of $defs and a billion nodes inlined.
+	it('is left as written instead of inlined', () => {
+		const schema = doubling(30)
+		const started = Date.now()
+
+		const out = inlineRefs(schema)
+
+		expect(out).toBe(schema)
+		expect(Date.now() - started).toBeLessThan(1_000)
+	})
+
+	it('is not strict, and says why', () => {
+		const result = toStrict(doubling(30))
+
+		expect(result.strict).toBe(false)
+		expect(result.reason).toContain(String(MAX_INLINED_NODES))
+	})
+
+	// No doubling needed: one long enum, referenced from many properties.
+	it('counts every value it would copy, not just the objects', () => {
+		const properties: Record<string, unknown> = {}
+		for (let i = 0; i < 3_000; i++) properties[`p${i}`] = { $ref: '#/$defs/Code' }
+		const schema = {
+			type: 'object',
+			properties,
+			$defs: { Code: { enum: Array.from({ length: 100_000 }, (_, i) => i) } },
+		}
+
+		expect(inlineRefs(schema)).toBe(schema)
+	})
+
+	it('is left as written when it nests too deep to follow', () => {
+		let schema: Record<string, unknown> = { type: 'string' }
+		for (let i = 0; i < MAX_SCHEMA_DEPTH * 10; i++) schema = { type: 'object', properties: { x: schema } }
+
+		expect(inlineRefs(schema)).toBe(schema)
+		expect(toStrict(schema).strict).toBe(false)
+	})
+
+	it('still inlines one that stays under the limit', () => {
+		expect(JSON.stringify(inlineRefs(doubling(4)))).not.toContain('$ref')
 	})
 })
 

@@ -167,8 +167,10 @@ class ConsentRequiredError(TrustGateError):
     def __init__(
         self, provider: str, connect_url: str, reason: str, message: str | None = None
     ) -> None:
+        # The link carries a ticket that works for whoever holds it, so it is
+        # read from ``connect_url`` rather than written into a message that gets logged.
         super().__init__(
-            message or f"user consent required for {provider}: open {connect_url}",
+            message or f"user consent required for {provider}: show the user error.connect_url",
             code="consent_required",
         )
         self.provider = provider

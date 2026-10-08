@@ -21,13 +21,14 @@ import threading
 import time
 import webbrowser
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import parse_qs, urlencode, urlparse
 
+from .config import insecure_http_from_env, require_safe_url
 from .errors import AuthenticationError, LoginRequiredError, TrustGateError
-from .transport import Response, Transport
+from .transport import Response, Transport, send
 
 #: Where a gateway serves the Store, under the host of its MCP plane.
 STORE_PATH = "/store/mcp"
@@ -39,7 +40,7 @@ _RENEW_MARGIN_S = 60.0
 CLIENT_NAME = "TrustGate SDK"
 
 
-def resolve_store_url(url: str | None) -> str:
+def resolve_store_url(url: str | None, allow_insecure_http: bool | None = None) -> str:
     """The Store's MCP endpoint, from the URL the console shows or its host.
 
     The console's "Store" settings show ``https://<gateway>.<mcp host>/store/mcp``.
@@ -51,9 +52,8 @@ def resolve_store_url(url: str | None) -> str:
             "url is required (or set TRUSTGATE_STORE_URL): the Store URL the console "
             "shows, https://<gateway>.<mcp host>/store/mcp"
         )
-    parsed = urlparse(raw)
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        raise TrustGateError(f'url must be an http(s) URL, got "{raw}"')
+    insecure = insecure_http_from_env() if allow_insecure_http is None else allow_insecure_http
+    parsed = require_safe_url(raw, insecure, "url")
     path = parsed.path.rstrip("/")
     return f"{parsed.scheme}://{parsed.netloc}{path or STORE_PATH}"
 
@@ -62,10 +62,11 @@ def resolve_store_url(url: str | None) -> str:
 class UserToken:
     """A signed-in session: the token the Store reads, and how to renew it."""
 
-    access_token: str
+    # Out of the repr: both tokens are a sign-in, and a session ends up in logs.
+    access_token: str = field(repr=False)
     #: Unix time the access token stops being accepted. Zero when unknown.
     expires_at: float = 0.0
-    refresh_token: str | None = None
+    refresh_token: str | None = field(default=None, repr=False)
     #: The client the session was issued to, which a refresh has to name.
     client_id: str | None = None
 
@@ -176,9 +177,12 @@ class UserSession:
         timeout: float,
         cache: TokenCache | None = None,
         clock: Callable[[], float] = time.time,
+        *,
+        allow_insecure_http: bool = False,
     ) -> None:
         self.url = url
         self._token = token
+        self._insecure = allow_insecure_http
         self._transport = transport
         self._timeout = timeout
         self._cache = cache
@@ -204,7 +208,7 @@ class UserSession:
             return True
 
     def _renew(self) -> None:
-        server = discover_auth_server(self.url, self._transport, self._timeout)
+        server = discover_auth_server(self.url, self._transport, self._timeout, self._insecure)
         form: dict[str, str] = {
             "grant_type": "refresh_token",
             "refresh_token": self._token.refresh_token or "",
@@ -223,7 +227,9 @@ class UserSession:
             self._cache.save(self.url, self._token)
 
 
-def discover_auth_server(url: str, transport: Transport, timeout: float) -> _AuthServer:
+def discover_auth_server(
+    url: str, transport: Transport, timeout: float, allow_insecure_http: bool = False
+) -> _AuthServer:
     """Where the gateway that serves ``url`` signs people in.
 
     Its metadata names the endpoints; a gateway that does not publish it still
@@ -231,21 +237,40 @@ def discover_auth_server(url: str, transport: Transport, timeout: float) -> _Aut
     """
     parsed = urlparse(url)
     origin = f"{parsed.scheme}://{parsed.netloc}"
-    response = transport.request(
-        "GET",
-        f"{origin}/.well-known/oauth-authorization-server",
-        {"Accept": "application/json"},
-        None,
-        timeout,
-    )
-    body = response.json() if response.status < 400 else None
+    try:
+        response = send(
+            transport,
+            "GET",
+            f"{origin}/.well-known/oauth-authorization-server",
+            {"Accept": "application/json"},
+            None,
+            timeout,
+        )
+    except TrustGateError as error:
+        # Metadata that moved is metadata this gateway does not publish here;
+        # the conventional paths below are where it serves the endpoints.
+        if error.code != "redirect":
+            raise
+        response = None
+    body = response.json() if response is not None and response.status < 400 else None
     meta = body if isinstance(body, dict) else {}
+
+    # The metadata names where the code, the PKCE verifier, the refresh token
+    # and the browser go, so each address it gives has to be one they may be
+    # sent to.
+    def endpoint(key: str, fallback: str, what: str) -> str:
+        chosen = str(meta.get(key) or fallback)
+        require_safe_url(chosen, allow_insecure_http, f"the gateway's {what}")
+        return chosen
+
     return _AuthServer(
-        authorization_endpoint=str(
-            meta.get("authorization_endpoint") or f"{origin}/oauth/authorize"
+        authorization_endpoint=endpoint(
+            "authorization_endpoint", f"{origin}/oauth/authorize", "authorization endpoint"
         ),
-        token_endpoint=str(meta.get("token_endpoint") or f"{origin}/oauth/token"),
-        registration_endpoint=str(meta.get("registration_endpoint") or f"{origin}/oauth/register"),
+        token_endpoint=endpoint("token_endpoint", f"{origin}/oauth/token", "token endpoint"),
+        registration_endpoint=endpoint(
+            "registration_endpoint", f"{origin}/oauth/register", "registration endpoint"
+        ),
     )
 
 
@@ -257,6 +282,7 @@ def login_flow(
     on_url: Callable[[str], None] | None = None,
     wait_s: float = 300.0,
     clock: Callable[[], float] = time.time,
+    allow_insecure_http: bool = False,
 ) -> UserToken:
     """Signs a person in through their browser and returns the session.
 
@@ -264,7 +290,7 @@ def login_flow(
     person's own machine: on a server or over SSH there is no browser to come
     back to it. That is what an application's API key is for.
     """
-    server = discover_auth_server(url, transport, timeout)
+    server = discover_auth_server(url, transport, timeout, allow_insecure_http)
     with _CallbackServer() as callback:
         client_id = _register_client(server, callback.redirect_uri, transport, timeout)
         verifier = secrets.token_urlsafe(48)
@@ -285,7 +311,8 @@ def login_flow(
             )
         )
         (on_url or _print_url)(authorize_url)
-        if open_browser:
+        # Opened only when it is a plain URL; the printed one is the fallback.
+        if open_browser and _openable(authorize_url):
             try:
                 webbrowser.open(authorize_url)
             except Exception:  # noqa: BLE001 - the printed URL is the fallback
@@ -325,7 +352,8 @@ def login_flow(
 def _register_client(
     server: _AuthServer, redirect_uri: str, transport: Transport, timeout: float
 ) -> str:
-    response = transport.request(
+    response = send(
+        transport,
         "POST",
         server.registration_endpoint,
         {"Content-Type": "application/json", "Accept": "application/json"},
@@ -351,7 +379,8 @@ def _register_client(
 
 
 def _post_form(url: str, form: dict[str, str], transport: Transport, timeout: float) -> Response:
-    return transport.request(
+    return send(
+        transport,
         "POST",
         url,
         {"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"},
@@ -386,6 +415,13 @@ def _oauth_reason(body: dict[str, Any], response: Response) -> str:
 def _s256(verifier: str) -> str:
     digest = hashlib.sha256(verifier.encode("ascii")).digest()
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+
+def _openable(url: str) -> bool:
+    """Whether a URL can go to the browser as it is: http(s), nothing that needs quoting."""
+    if urlparse(url).scheme not in ("http", "https"):
+        return False
+    return not any(ch.isspace() or ord(ch) < 0x20 or ch in "\"'<>\\^`{|}" for ch in url)
 
 
 def _print_url(url: str) -> None:

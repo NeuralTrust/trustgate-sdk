@@ -1,5 +1,13 @@
 import { Agent, EndUserAgent, UserAgent, endUserAgent } from './agent.js'
-import { API_KEY_HEADER, resolveConfig, type ResolvedConfig, type TrustGateConfig } from './config.js'
+import {
+	API_KEY_HEADER,
+	insecureHttpFromEnv,
+	maskedWhenPrinted,
+	requireSafeUrl,
+	resolveConfig,
+	type ResolvedConfig,
+	type TrustGateConfig,
+} from './config.js'
 import { listConnections } from './connections.js'
 import {
 	ConsentRequiredError,
@@ -65,11 +73,12 @@ export type LLMEndpoint = {
  * once, at `connect()`, and answers both.
  */
 export class TrustGate {
-	private readonly config: ResolvedConfig
+	// Runtime-private: it holds the key, and a logged client must not.
+	readonly #config: ResolvedConfig
 	private identityPromise?: Promise<KeyIdentity>
 
 	constructor(config: TrustGateConfig = {}) {
-		this.config = resolveConfig(config)
+		this.#config = resolveConfig(config)
 	}
 
 	/**
@@ -77,9 +86,9 @@ export class TrustGate {
 	 * key, and a long-lived process should not re-ask on every call.
 	 */
 	async identity(signal?: AbortSignal): Promise<KeyIdentity> {
-		this.identityPromise ??= whoAmI(this.config, signal).catch((error: unknown) => {
+		this.identityPromise ??= whoAmI(this.#config, signal).catch((error: unknown) => {
 			this.identityPromise = undefined
-			throw asIdentityError(error, this.config.baseUrl)
+			throw asIdentityError(error, this.#config.baseUrl)
 		})
 		return this.identityPromise
 	}
@@ -93,14 +102,17 @@ export class TrustGate {
 	 */
 	async llm(signal?: AbortSignal): Promise<LLMEndpoint> {
 		const identity = await this.identity(signal)
-		const consumer = selectConsumer(identity, 'LLM', this.config.llmConsumer, 'llmConsumer')
-		return {
-			baseUrl: consumer.url,
-			anthropicBaseUrl: withoutVersion(consumer.url),
-			apiKey: this.config.apiKey,
-			headers: { [API_KEY_HEADER]: this.config.apiKey },
-			consumer: consumer.slug,
-		}
+		const consumer = onSafePlane(selectConsumer(identity, 'LLM', this.#config.llmConsumer, 'llmConsumer'), this.#config)
+		return maskedWhenPrinted<LLMEndpoint>(
+			{
+				baseUrl: consumer.url,
+				anthropicBaseUrl: withoutVersion(consumer.url),
+				apiKey: this.#config.apiKey,
+				headers: { [API_KEY_HEADER]: this.#config.apiKey },
+				consumer: consumer.slug,
+			},
+			['apiKey', 'headers']
+		)
 	}
 
 	/**
@@ -121,12 +133,12 @@ export class TrustGate {
 	 */
 	async connect(options: ConnectOptions = {}): Promise<Agent> {
 		const identity = await this.identity(options.signal)
-		const consumer = selectConsumer(identity, 'MCP', this.config.mcpConsumer, 'mcpConsumer')
+		const consumer = onSafePlane(selectConsumer(identity, 'MCP', this.#config.mcpConsumer, 'mcpConsumer'), this.#config)
 
 		// Accounts before tools: a server with no account for the application can
 		// fail the listing itself, which would surface as a bare gateway error
 		// before this check — the one that says who fixes it — ever ran.
-		const plane = onMCPPlane(this.config, consumer)
+		const plane = onMCPPlane(this.#config, consumer)
 		const connections = await listConnections(plane, consumer.slug, undefined, options.signal)
 		const blocked = blockedUpstreams(consumer.upstreams, connections)
 		const required = options.requires ?? []
@@ -173,8 +185,8 @@ export class TrustGate {
 	 */
 	async forEndUser(endUser: string, options: ConnectOptions = {}): Promise<EndUserAgent> {
 		const identity = await this.identity(options.signal)
-		const consumer = selectConsumer(identity, 'MCP', this.config.mcpConsumer, 'mcpConsumer')
-		const agent = endUserAgent(onMCPPlane(this.config, consumer), consumer.slug, endUser, consumer.url, [])
+		const consumer = onSafePlane(selectConsumer(identity, 'MCP', this.#config.mcpConsumer, 'mcpConsumer'), this.#config)
+		const agent = endUserAgent(onMCPPlane(this.#config, consumer), consumer.slug, endUser, consumer.url, [])
 		const tools = await agent.refresh(options.signal)
 		const missing = missingTools(tools, options.requires ?? [])
 		if (missing.length > 0) {
@@ -203,6 +215,8 @@ export type TrustGateUserConfig = {
 	fetch?: typeof globalThis.fetch
 	/** Per-request timeout in milliseconds. Default 30000. */
 	timeoutMs?: number
+	/** As in {@link TrustGateConfig.allowInsecureHttp}, for the session token. */
+	allowInsecureHttp?: boolean
 }
 
 export type LoginOptions = LoginFlowOptions & {
@@ -217,6 +231,7 @@ export type LoginOptions = LoginFlowOptions & {
 	force?: boolean
 	fetch?: typeof globalThis.fetch
 	timeoutMs?: number
+	allowInsecureHttp?: boolean
 }
 
 /**
@@ -234,10 +249,12 @@ export class TrustGateUser {
 	readonly session: UserSession
 	private readonly fetchImpl: typeof globalThis.fetch
 	private readonly timeoutMs: number
+	private readonly allowInsecureHttp: boolean
 	private readonly cache?: TokenCache
 
 	constructor(config: TrustGateUserConfig = {}) {
-		this.url = resolveStoreUrl(config.url)
+		this.allowInsecureHttp = config.allowInsecureHttp ?? insecureHttpFromEnv()
+		this.url = resolveStoreUrl(config.url, this.allowInsecureHttp)
 		this.fetchImpl = config.fetch ?? globalThis.fetch
 		this.timeoutMs = config.timeoutMs ?? 30_000
 		this.cache = config.cache
@@ -252,7 +269,7 @@ export class TrustGateUser {
 			}
 			token = { accessToken: raw, expiresAt: 0 }
 		}
-		this.session = new UserSession(this.url, token, { fetch: this.fetchImpl, timeoutMs: this.timeoutMs }, this.cache)
+		this.session = new UserSession(this.url, token, this.http, this.cache)
 	}
 
 	/**
@@ -267,11 +284,12 @@ export class TrustGateUser {
 	 * application, with an API key: see {@link TrustGate}.
 	 */
 	static async login(options: LoginOptions = {}): Promise<TrustGateUser> {
-		const url = resolveStoreUrl(options.url)
-		const http = { fetch: options.fetch ?? globalThis.fetch, timeoutMs: options.timeoutMs ?? 30_000 }
+		const allowInsecureHttp = options.allowInsecureHttp ?? insecureHttpFromEnv()
+		const url = resolveStoreUrl(options.url, allowInsecureHttp)
+		const http = { fetch: options.fetch ?? globalThis.fetch, timeoutMs: options.timeoutMs ?? 30_000, allowInsecureHttp }
 		const cache = options.cache ?? new FileTokenCache()
 		const make = (token: UserToken) =>
-			new TrustGateUser({ url, token, cache, fetch: http.fetch, timeoutMs: http.timeoutMs })
+			new TrustGateUser({ url, token, cache, fetch: http.fetch, timeoutMs: http.timeoutMs, allowInsecureHttp })
 		if (!options.force) {
 			const cached = await cache.load(url)
 			if (cached) {
@@ -289,6 +307,10 @@ export class TrustGateUser {
 		const token = await loginFlow(url, http, options)
 		await cache.save(url, token)
 		return make(token)
+	}
+
+	private get http(): { fetch: typeof globalThis.fetch; timeoutMs: number; allowInsecureHttp: boolean } {
+		return { fetch: this.fetchImpl, timeoutMs: this.timeoutMs, allowInsecureHttp: this.allowInsecureHttp }
 	}
 
 	/** Forgets the session kept for this Store. The browser's sign-in stays. */
@@ -309,6 +331,7 @@ export class TrustGateUser {
 			apiKey: '',
 			fetch: this.fetchImpl,
 			timeoutMs: this.timeoutMs,
+			allowInsecureHttp: this.allowInsecureHttp,
 		}
 		const transport = new MCPTransport(config, this.url, {}, this.session)
 		const tools = await transport.listTools(options.signal)
@@ -356,6 +379,18 @@ function onMCPPlane(config: ResolvedConfig, consumer: { slug: string; url: strin
 	const url = consumer.url.replace(/\/+$/, '')
 	if (!url.endsWith(suffix)) return config
 	return { ...config, baseUrl: url.slice(0, -suffix.length) }
+}
+
+/**
+ * The consumer, once its address is one the key may be sent to.
+ *
+ * The key already went to the base URL to ask, so this is not about trusting
+ * the answer's host — the LLM plane lives on another one by design. It is about
+ * the scheme: an https gateway must not be able to point the key at plain http.
+ */
+function onSafePlane<T extends { slug: string; url: string }>(consumer: T, config: ResolvedConfig): T {
+	requireSafeUrl(consumer.url, config.allowInsecureHttp, `the address the gateway gave for "${consumer.slug}"`)
+	return consumer
 }
 
 function withoutVersion(url: string): string {

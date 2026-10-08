@@ -143,13 +143,29 @@ function verb(upstreams: BlockedUpstream[], one: string, many: string): string {
  * page to put in front of that user, and it expires.
  */
 export class ConsentRequiredError extends TrustGateError {
+	readonly #connectUrl: string
+
 	constructor(
 		readonly provider: string,
-		readonly connectUrl: string,
+		connectUrl: string,
 		readonly cause_: string,
 		message?: string
 	) {
-		super(message ?? `user consent required for ${provider}: open ${connectUrl}`, { code: 'consent_required' })
+		super(message || `user consent required for ${provider}: show the user error.connectUrl`, {
+			code: 'consent_required',
+		})
+		this.#connectUrl = connectUrl
+	}
+
+	/**
+	 * The page to put in front of the user.
+	 *
+	 * Its ticket works for whoever holds it until it expires, so it is neither
+	 * in the message nor one of the error's own fields: an error is usually
+	 * logged whole, and this is the one part that should not be.
+	 */
+	get connectUrl(): string {
+		return this.#connectUrl
 	}
 }
 

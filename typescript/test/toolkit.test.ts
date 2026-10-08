@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { TrustGate } from '../src/client.js'
 import type { Agent } from '../src/agent.js'
-import { ConsentRequiredError, PolicyBlockedError, ToolNotFoundError } from '../src/errors.js'
+import { ConsentRequiredError, PolicyBlockedError, ToolNotFoundError, TrustGateError } from '../src/errors.js'
 import { ToolFormat, type GatewayTool } from '../src/types.js'
 import { fakeGateway } from './fake-gateway.js'
 
@@ -130,6 +130,27 @@ describe('execute', () => {
 		expect(call.params).toEqual({ name: 'notion_search', arguments: { query: 'runbook' } })
 	})
 
+	// A model can name a tool it was never offered; a toolkit narrowed by hand
+	// only means something if execute holds to it.
+	it('refuses a tool the toolkit does not carry, before calling anything', async () => {
+		const { agent, gateway } = await agentWith()
+		const toolkit = agent.toolkit(ToolFormat.OpenAIResponses)
+		const before = gateway.requests.length
+
+		const error = await toolkit
+			.execute({
+				output: [
+					{ type: 'function_call', call_id: 'call_1', name: 'notion_search', arguments: '{}' },
+					{ type: 'function_call', call_id: 'call_2', name: 'github_list_repos', arguments: '{}' },
+				],
+			})
+			.catch((e: unknown) => e)
+
+		expect(error).toBeInstanceOf(ToolNotFoundError)
+		expect((error as ToolNotFoundError).tool).toBe('github_list_repos')
+		expect(gateway.requests.length).toBe(before)
+	})
+
 	// The nulls strict asked for must not reach a server that never agreed to
 	// them, so the conversion is undone on the way back.
 	it('undoes the strict rewrite before calling the gateway', async () => {
@@ -212,6 +233,67 @@ describe('errors from a tool call', () => {
 		expect(error).toBeInstanceOf(ConsentRequiredError)
 		expect(error.provider).toBe('com.notion/mcp')
 		expect(error.connectUrl).toContain('ticket=t-9')
+	})
+
+	// The ticket in the link works for whoever holds it, and messages end up in logs.
+	it('keeps the link out of the message', async () => {
+		const { agent } = await agentWith({
+			callErrors: {
+				notion_search: {
+					code: -32003,
+					message: 'user consent required: open https://gw.test/acme/mcp/connect?ticket=t-9 to connect notion',
+					data: { provider: 'com.notion/mcp', connect_url: 'https://gw.test/acme/mcp/connect?ticket=t-9' },
+				},
+			},
+		})
+
+		const error = await agent.callTool('notion_search', {}).catch((e) => e)
+
+		expect(error).toBeInstanceOf(ConsentRequiredError)
+		expect(error.message).not.toContain('t-9')
+	})
+
+	// The gateway relays errors from the servers behind it, so the code alone
+	// does not say who wrote the link.
+	it.each([
+		['another host', 'https://connect.example/connect?ticket=t-9'],
+		['another port', 'https://gw.test:8443/acme/mcp/connect?ticket=t-9'],
+		['a user name in it', 'https://someone@gw.test/acme/mcp/connect?ticket=t-9'],
+		['another page', 'https://gw.test/acme/mcp/settings?ticket=t-9'],
+		['no ticket in it', 'https://gw.test/acme/mcp/connect'],
+		['no web page at all', 'mailto:help@gw.test'],
+	])('does not pass on a link to %s', async (_, link) => {
+		const { agent } = await agentWith({
+			callErrors: {
+				notion_search: { code: -32003, message: 'consent', data: { provider: 'com.notion/mcp', connect_url: link } },
+			},
+		})
+
+		const error = await agent.callTool('notion_search', {}).catch((e) => e)
+
+		expect(error).not.toBeInstanceOf(ConsentRequiredError)
+		expect(error).toBeInstanceOf(TrustGateError)
+		expect(error.code).toBe('untrusted_connect_url')
+		expect(error.message).not.toContain(link)
+	})
+
+	// Behind a proxy that does not forward the scheme, the gateway writes http
+	// for the https host the SDK just reached.
+	it('takes the gateway\'s link over https when it was written as http', async () => {
+		const { agent } = await agentWith({
+			callErrors: {
+				notion_search: {
+					code: -32003,
+					message: 'consent',
+					data: { provider: 'com.notion/mcp', connect_url: 'http://gw.test/acme/mcp/connect?ticket=t-9' },
+				},
+			},
+		})
+
+		const error = await agent.callTool('notion_search', {}).catch((e) => e)
+
+		expect(error).toBeInstanceOf(ConsentRequiredError)
+		expect(error.connectUrl).toBe('https://gw.test/acme/mcp/connect?ticket=t-9')
 	})
 
 	it('separates a policy refusal from a failure', async () => {

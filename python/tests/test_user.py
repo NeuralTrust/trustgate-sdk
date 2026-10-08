@@ -19,6 +19,7 @@ from trustgate import (
     MemoryTokenCache,
     MissingToolsError,
     TrustGate,
+    TrustGateError,
     TrustGateUser,
     UserAgent,
     UserToken,
@@ -42,6 +43,12 @@ class FakeStore:
     refreshable: dict[str, str] = field(default_factory=dict)
     #: Overrides what the browser comes back with.
     callback: dict[str, str] | None = None
+    #: Overrides the token endpoint the metadata names.
+    token_endpoint: str = "https://acme.mcp.test/oauth/token"
+    #: Overrides the link the connect tool answers with.
+    connect_url: str = "https://acme.mcp.test/store/mcp/connect?ticket=tk-9"
+    #: Answers the metadata request with a redirect instead.
+    metadata_moved: bool = False
     challenge: str = ""
     registered: list[dict[str, Any]] = field(default_factory=list)
     authorized: list[dict[str, str]] = field(default_factory=list)
@@ -53,12 +60,16 @@ class FakeStore:
     ) -> Response:
         path = urlparse(url).path
         if path == "/.well-known/oauth-authorization-server":
+            if self.metadata_moved:
+                return Response(
+                    status=302, headers={"Location": "https://elsewhere.test/meta"}, text=""
+                )
             return _json(
                 200,
                 {
                     "issuer": "https://acme.mcp.test",
                     "authorization_endpoint": "https://acme.mcp.test/oauth/authorize",
-                    "token_endpoint": "https://acme.mcp.test/oauth/token",
+                    "token_endpoint": self.token_endpoint,
                     "registration_endpoint": "https://acme.mcp.test/oauth/register",
                 },
             )
@@ -85,7 +96,7 @@ class FakeStore:
                 result = {
                     "content": [{"type": "text", "text": "open it"}],
                     "structuredContent": {
-                        "connect_url": "https://acme.mcp.test/store/mcp/connect?ticket=tk-9",
+                        "connect_url": self.connect_url,
                         "action": "user_confirmation_required",
                     },
                 }
@@ -353,3 +364,54 @@ def test_keeps_sessions_in_a_file_only_its_owner_reads(tmp_path) -> None:
     assert FileTokenCache(cache.path).load(STORE) == UserToken("at-1", 10.0, "gwrt_1", "agw-1")
     cache.clear(STORE)
     assert cache.load(STORE) is None
+
+
+def test_refuses_a_store_on_another_host_over_plain_http() -> None:
+    with pytest.raises(TrustGateError, match="plain http"):
+        resolve_store_url("http://acme.mcp.test")
+    assert resolve_store_url("http://127.0.0.1:8082") == "http://127.0.0.1:8082/store/mcp"
+    assert resolve_store_url("http://acme.mcp.test", True) == "http://acme.mcp.test/store/mcp"
+
+
+# The metadata decides where the code, the PKCE verifier and later the refresh
+# token are sent.
+def test_refuses_metadata_that_would_send_the_sign_in_over_plain_http() -> None:
+    store = FakeStore(token_endpoint="http://acme.mcp.test/oauth/token")
+
+    with pytest.raises(TrustGateError, match="token endpoint is plain http"):
+        login(store)
+    assert store.token_requests == []
+
+
+def test_signs_in_at_the_conventional_paths_when_the_metadata_has_moved() -> None:
+    store = FakeStore(metadata_moved=True)
+
+    agent = login(store).connect()
+
+    assert [tool.name for tool in agent.tools] == ["linear_list_issues"]
+    assert store.token_requests[0]["grant_type"] == "authorization_code"
+
+
+def test_does_not_pass_on_a_connect_link_that_is_not_the_gateways() -> None:
+    store = FakeStore(
+        tools=[
+            {
+                "name": "trustgate_connect_linear",
+                "title": "Connect Linear",
+                "inputSchema": {"type": "object"},
+            }
+        ],
+        connect_url="https://login.example/connect?ticket=tk-9",
+    )
+    agent = login(store).connect()
+
+    with pytest.raises(TrustGateError) as caught:
+        agent.connect_link()
+    assert caught.value.code == "untrusted_connect_url"
+
+
+def test_a_session_prints_without_its_tokens() -> None:
+    token = UserToken(access_token="tok_access_secret", refresh_token="tok_refresh_secret")
+
+    assert "tok_access_secret" not in repr(token)
+    assert "tok_refresh_secret" not in repr(token)

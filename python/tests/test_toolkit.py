@@ -9,6 +9,7 @@ from trustgate import (
     ToolFormat,
     ToolNotFoundError,
     TrustGate,
+    TrustGateError,
 )
 
 from .fake_gateway import FakeGateway
@@ -266,6 +267,106 @@ def test_hands_back_the_link_when_the_user_has_not_connected() -> None:
 
     assert caught.value.provider == "com.notion/mcp"
     assert "ticket=t-9" in caught.value.connect_url
+
+
+# The ticket in the link works for whoever holds it, and messages end up in logs.
+def test_keeps_the_link_out_of_the_message() -> None:
+    link = "https://gw.test/acme/mcp/connect?ticket=t-9"
+    agent, _ = agent_with(
+        call_errors={
+            "notion_search": {
+                "code": -32003,
+                "message": f"user consent required: open {link} to connect notion",
+                "data": {"provider": "com.notion/mcp", "connect_url": link},
+            }
+        }
+    )
+
+    with pytest.raises(ConsentRequiredError) as caught:
+        agent.call_tool("notion_search", {})
+    assert "t-9" not in str(caught.value)
+
+
+# The gateway relays errors from the servers behind it, so the code alone does
+# not say who wrote the link.
+@pytest.mark.parametrize(
+    "link",
+    [
+        "https://connect.example/connect?ticket=t-9",
+        "https://gw.test:8443/acme/mcp/connect?ticket=t-9",
+        "https://someone@gw.test/acme/mcp/connect?ticket=t-9",
+        "https://gw.test/acme/mcp/settings?ticket=t-9",
+        "https://gw.test/acme/mcp/connect",
+        "mailto:help@gw.test",
+    ],
+)
+def test_does_not_pass_on_a_link_the_gateway_did_not_mint(link: str) -> None:
+    agent, _ = agent_with(
+        call_errors={
+            "notion_search": {
+                "code": -32003,
+                "message": "consent",
+                "data": {"provider": "com.notion/mcp", "connect_url": link},
+            }
+        }
+    )
+
+    with pytest.raises(TrustGateError) as caught:
+        agent.call_tool("notion_search", {})
+    assert not isinstance(caught.value, ConsentRequiredError)
+    assert caught.value.code == "untrusted_connect_url"
+    assert link not in str(caught.value)
+
+
+# A model can name a tool it was never offered; a toolkit narrowed by hand only
+# means something if execute holds to it.
+def test_refuses_a_tool_the_toolkit_does_not_carry_before_calling_anything() -> None:
+    agent, gateway = agent_with()
+    toolkit = agent.toolkit(ToolFormat.OPENAI_RESPONSES)
+    before = len(gateway.requests)
+
+    with pytest.raises(ToolNotFoundError) as caught:
+        toolkit.execute(
+            {
+                "output": [
+                    {
+                        "type": "function_call",
+                        "call_id": "c1",
+                        "name": "notion_search",
+                        "arguments": "{}",
+                    },
+                    {
+                        "type": "function_call",
+                        "call_id": "c2",
+                        "name": "github_list_repos",
+                        "arguments": "{}",
+                    },
+                ]
+            }
+        )
+    assert caught.value.tool == "github_list_repos"
+    assert len(gateway.requests) == before
+
+
+# Behind a proxy that does not forward the scheme, the gateway writes http for
+# the https host the SDK just reached.
+def test_takes_the_gateways_link_over_https_when_it_was_written_as_http() -> None:
+    agent, _ = agent_with(
+        call_errors={
+            "notion_search": {
+                "code": -32003,
+                "message": "consent",
+                "data": {
+                    "provider": "com.notion/mcp",
+                    "connect_url": "http://gw.test/acme/mcp/connect?ticket=t-9",
+                },
+            }
+        }
+    )
+
+    with pytest.raises(ConsentRequiredError) as caught:
+        agent.call_tool("notion_search", {})
+    assert caught.value.connect_url == "https://gw.test/acme/mcp/connect?ticket=t-9"
 
 
 def test_separates_a_policy_refusal_from_a_failure() -> None:

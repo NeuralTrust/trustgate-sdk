@@ -9,7 +9,7 @@ from urllib.parse import quote
 
 from .config import API_KEY_HEADER, END_USER_HEADER, Config
 from .errors import InvalidRequestError
-from .transport import Transport, error_for_response
+from .transport import Transport, error_for_response, send
 from .types import Connection, ConnectLink
 
 
@@ -21,7 +21,8 @@ def connections_path(slug: str, end_user: str | None = None) -> str:
 def list_connections(
     config: Config, transport: Transport, slug: str, end_user: str | None = None
 ) -> list[Connection]:
-    response = transport.request(
+    response = send(
+        transport,
         "GET",
         f"{config.base_url}{connections_path(slug, end_user)}",
         {API_KEY_HEADER: config.api_key, "Accept": "application/json"},
@@ -47,7 +48,8 @@ def create_connect_link(
         payload["provider"] = provider
     if instance:
         payload["instance"] = instance
-    response = transport.request(
+    response = send(
+        transport,
         "POST",
         f"{config.base_url}/{quote(slug)}/connections/links",
         {

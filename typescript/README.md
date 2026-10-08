@@ -22,7 +22,9 @@ The key is the whole configuration, or nothing if it is in the environment.
 The gateway it belongs to, and the applications behind it, are asked for:
 `tg.identity()` asks once and remembers it. Set `TRUSTGATE_URL` (or `baseUrl`)
 only for a Hybrid gateway, to the MCP host its own data plane is published on:
-the NeuralTrust cloud does not serve that gateway.
+the NeuralTrust cloud does not serve that gateway. A plain `http://` address is
+refused unless it is this machine or you pass `allowInsecureHttp`
+(`TRUSTGATE_ALLOW_INSECURE_HTTP=1`), because the key travels in a header.
 
 ```ts
 const { gateway, key, consumers } = await tg.identity()
@@ -151,10 +153,10 @@ strict asked for are stripped unless the tool's own schema accepts them.
 |---|---|
 | `MissingToolsError` | `requires` names a tool the application (or your Store) does not serve |
 | `UpstreamNotConnectedError` | a server the call needs has no account behind it, at startup or on a call; `servers` names them and the message says who connects it — never a link |
-| `ConsentRequiredError` | an end user has not connected; carries `connectUrl` |
+| `ConsentRequiredError` | an end user has not connected; carries `connectUrl`, checked to be a page on this gateway |
 | `LoginRequiredError` | a signed-in session has ended and cannot be renewed; call `TrustGate.login()` again |
 | `PolicyBlockedError` | a gateway policy refused the call |
-| `ToolNotFoundError` | the tool left the toolkit under a running agent |
+| `ToolNotFoundError` | the tool left the toolkit under a running agent, or the model named one the toolkit was not built with |
 | `PlaneUnavailableError` | the key reaches no application on that plane |
 | `AuthenticationError`, `RateLimitedError`, `ServiceUnavailableError`, `TrustGateServerError` | as named |
 

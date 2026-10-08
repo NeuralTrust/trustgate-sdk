@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from typing import Any, Protocol
+from urllib.parse import ParseResult, parse_qs, urlparse, urlunparse
 
 from .config import API_KEY_HEADER, Config
 from .errors import (
@@ -24,7 +25,7 @@ from .errors import (
     TrustGateServerError,
     UpstreamNotConnectedError,
 )
-from .transport import Response, Transport, retry_after_ms
+from .transport import Response, Transport, retry_after_ms, send
 from .types import GatewayTool
 from .whoami import BLOCKED_BY_ADMINISTRATOR, BLOCKED_BY_END_USER, KeyUpstream
 
@@ -124,11 +125,12 @@ class MCPTransport:
                 status=response.status,
             )
         if "error" in rpc:
-            raise _error_for_rpc(rpc["error"], response)
+            raise _error_for_rpc(rpc["error"], self.url, response)
         return rpc.get("result") or {}
 
     def _post(self, body: bytes) -> Response:
-        return self._transport.request(
+        return send(
+            self._transport,
             "POST",
             self.url,
             {
@@ -196,7 +198,9 @@ def _what_it_said(text: str) -> str:
 REASON_APPLICATION_NOT_CONNECTED = "application_not_connected"
 
 
-def _error_for_rpc(error: dict[str, Any], response: Response | None = None) -> TrustGateError:
+def _error_for_rpc(
+    error: dict[str, Any], endpoint: str, response: Response | None = None
+) -> TrustGateError:
     code = error.get("code")
     message = str(error.get("message", ""))
     data = error.get("data") or {}
@@ -205,12 +209,18 @@ def _error_for_rpc(error: dict[str, Any], response: Response | None = None) -> T
     if code == CODE_CONSENT_REQUIRED and _not_connectable_here(data):
         return UpstreamNotConnectedError([_upstream_from(data, message)])
     if code == CODE_CONSENT_REQUIRED:
-        return ConsentRequiredError(
-            str(data.get("provider", "this provider")),
-            str(data.get("connect_url", "")),
-            str(data.get("cause", "")),
-            message,
-        )
+        provider = str(data.get("provider", "this provider"))
+        connect_url = gateway_connect_url(str(data.get("connect_url", "")), endpoint)
+        if connect_url is None:
+            origin = urlparse(endpoint)
+            return TrustGateError(
+                f"a consent prompt for {provider} came back with a link that is not this "
+                f"gateway's ({origin.scheme}://{origin.netloc}), so it was not passed on",
+                code="untrusted_connect_url",
+            )
+        # The gateway's own message quotes the link, ticket included; the SDK
+        # writes its own so the ticket does not end up in a log.
+        return ConsentRequiredError(provider, connect_url, str(data.get("cause", "")))
     if code == CODE_POLICY_BLOCKED:
         return PolicyBlockedError(message, code=str(code))
     if code == CODE_RATE_LIMITED:
@@ -236,6 +246,52 @@ def _not_connectable_here(data: dict[str, Any]) -> bool:
     if data.get("reason") == REASON_APPLICATION_NOT_CONNECTED:
         return True
     return not str(data.get("connect_url") or "").strip()
+
+
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def gateway_connect_url(link: str, endpoint: str) -> str | None:
+    """The connect link, when it is one this gateway minted; None otherwise.
+
+    The gateway relays errors from the servers behind it, so the code alone does
+    not say who wrote the link, and it is a page the SDK tells the caller to put
+    in front of a person. The gateway builds it from the endpoint the call went
+    to, ``<endpoint origin>/<consumer>/mcp/connect?ticket=...``, so a link on any
+    other host or port, to another page, or with credentials in it, is not
+    passed on.
+
+    A gateway behind a proxy that does not forward the scheme writes ``http://``
+    for its own https host. The SDK just reached that host over https, so the
+    link is upgraded rather than refused - the ticket never goes out in clear.
+    """
+    try:
+        parsed = urlparse(link)
+        base = urlparse(endpoint)
+        port, base_port = _explicit_port(parsed), _explicit_port(base)
+    except ValueError:
+        return None
+    if parsed.scheme not in _DEFAULT_PORTS or parsed.username or parsed.password:
+        return None
+    if not parsed.hostname or parsed.hostname != base.hostname or port != base_port:
+        return None
+    if not parsed.path.rstrip("/").endswith("/mcp/connect"):
+        return None
+    if not parse_qs(parsed.query).get("ticket", [""])[0]:
+        return None
+    if base.scheme == "https":
+        host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+        parsed = parsed._replace(scheme="https", netloc=host if port is None else f"{host}:{port}")
+    return urlunparse(parsed)
+
+
+def _explicit_port(url: ParseResult) -> int | None:
+    """The port a URL names, or None when it is its scheme's default - as WHATWG URLs read it.
+
+    Raises ValueError for a port that is not a number, as ``ParseResult.port`` does.
+    """
+    port = url.port
+    return None if port == _DEFAULT_PORTS.get(url.scheme) else port
 
 
 def _upstream_from(data: dict[str, Any], message: str) -> KeyUpstream:

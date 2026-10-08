@@ -5,11 +5,17 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from urllib.parse import urlparse
 
 from .agent import Agent, EndUserAgent, UserAgent, end_user_agent
-from .config import API_KEY_HEADER, Config, resolve_config
+from .config import (
+    API_KEY_HEADER,
+    Config,
+    insecure_http_from_env,
+    require_safe_url,
+    resolve_config,
+)
 from .connections import list_connections
 from .errors import (
     ConsentRequiredError,
@@ -32,6 +38,7 @@ from .user import (
 from .whoami import (
     BLOCKED_BY_ADMINISTRATOR,
     BLOCKED_BY_END_USER,
+    KeyConsumer,
     KeyIdentity,
     KeyUpstream,
     select_consumer,
@@ -45,8 +52,9 @@ class LLMEndpoint:
 
     #: Pass as ``base_url`` to the OpenAI client. It ends in ``/v1``.
     base_url: str
-    api_key: str
-    headers: dict[str, str]
+    # Out of the repr, so an endpoint can be logged without its key.
+    api_key: str = field(repr=False)
+    headers: dict[str, str] = field(repr=False)
     #: The consumer behind it, for logs and for error messages.
     consumer: str
 
@@ -86,8 +94,11 @@ class TrustGate:
         llm_consumer: str | None = None,
         timeout: float = 30.0,
         transport: Transport | None = None,
+        allow_insecure_http: bool | None = None,
     ) -> None:
-        self._config = resolve_config(base_url, api_key, mcp_consumer, llm_consumer, timeout)
+        self._config = resolve_config(
+            base_url, api_key, mcp_consumer, llm_consumer, timeout, allow_insecure_http
+        )
         self._transport = transport or UrllibTransport()
         self._identity: KeyIdentity | None = None
 
@@ -108,8 +119,9 @@ class TrustGate:
         clients - it points them somewhere else. Wrapping would mean chasing
         every change they make and breaking streaming on the way.
         """
-        consumer = select_consumer(
-            self.identity(), "LLM", self._config.llm_consumer, "llm_consumer"
+        consumer = _on_safe_plane(
+            select_consumer(self.identity(), "LLM", self._config.llm_consumer, "llm_consumer"),
+            self._config,
         )
         return LLMEndpoint(
             base_url=consumer.url,
@@ -134,8 +146,9 @@ class TrustGate:
         because who a request runs as is read from the request rather than
         declared anywhere.
         """
-        consumer = select_consumer(
-            self.identity(), "MCP", self._config.mcp_consumer, "mcp_consumer"
+        consumer = _on_safe_plane(
+            select_consumer(self.identity(), "MCP", self._config.mcp_consumer, "mcp_consumer"),
+            self._config,
         )
         # Accounts before tools: a server with no account for the application
         # can fail the listing itself, which would surface as a bare gateway
@@ -174,6 +187,7 @@ class TrustGate:
         timeout: float = 30.0,
         transport: Transport | None = None,
         on_url: Callable[[str], None] | None = None,
+        allow_insecure_http: bool | None = None,
     ) -> TrustGateUser:
         """Signs a person in to their own Store. See :meth:`TrustGateUser.login`."""
         return TrustGateUser.login(
@@ -184,6 +198,7 @@ class TrustGate:
             timeout=timeout,
             transport=transport,
             on_url=on_url,
+            allow_insecure_http=allow_insecure_http,
         )
 
     def for_end_user(self, end_user: str, requires: list[str] | None = None) -> EndUserAgent:
@@ -196,8 +211,9 @@ class TrustGate:
         which is why there is no startup preflight here and one in
         :meth:`connect`.
         """
-        consumer = select_consumer(
-            self.identity(), "MCP", self._config.mcp_consumer, "mcp_consumer"
+        consumer = _on_safe_plane(
+            select_consumer(self.identity(), "MCP", self._config.mcp_consumer, "mcp_consumer"),
+            self._config,
         )
         agent = end_user_agent(
             _on_mcp_plane(self._config, consumer.slug, consumer.url),
@@ -231,9 +247,13 @@ class TrustGateUser:
         *,
         token: UserToken | None = None,
         cache: TokenCache | None = None,
+        allow_insecure_http: bool | None = None,
     ) -> None:
+        self._insecure = (
+            insecure_http_from_env() if allow_insecure_http is None else allow_insecure_http
+        )
         #: The Store's MCP endpoint, ``https://<gateway>.<mcp host>/store/mcp``.
-        self.url = resolve_store_url(url)
+        self.url = resolve_store_url(url, self._insecure)
         self._transport = transport or UrllibTransport()
         self._timeout = timeout
         self._cache = cache
@@ -245,7 +265,9 @@ class TrustGateUser:
                     f'to sign in through the browser use TrustGate.login(url="{self.url}")'
                 )
             token = UserToken(access_token=raw)
-        self.session = UserSession(self.url, token, self._transport, timeout, cache)
+        self.session = UserSession(
+            self.url, token, self._transport, timeout, cache, allow_insecure_http=self._insecure
+        )
 
     @classmethod
     def login(
@@ -258,6 +280,7 @@ class TrustGateUser:
         timeout: float = 30.0,
         transport: Transport | None = None,
         on_url: Callable[[str], None] | None = None,
+        allow_insecure_http: bool | None = None,
     ) -> TrustGateUser:
         """Signs in through the browser, or reuses the session from last time.
 
@@ -271,25 +294,44 @@ class TrustGateUser:
         person's own computer. A server acting for many people is an
         application, with an API key: see :class:`TrustGate`.
         """
-        resolved = resolve_store_url(url)
+        insecure = insecure_http_from_env() if allow_insecure_http is None else allow_insecure_http
+        resolved = resolve_store_url(url, insecure)
         http = transport or UrllibTransport()
         store = cache if cache is not None else FileTokenCache()
+
+        def make(token: UserToken) -> TrustGateUser:
+            return cls(
+                resolved,
+                timeout=timeout,
+                transport=http,
+                token=token,
+                cache=store,
+                allow_insecure_http=insecure,
+            )
+
         if not force:
             cached = store.load(resolved)
             if cached is not None:
-                session = UserSession(resolved, cached, http, timeout, store)
+                session = UserSession(
+                    resolved, cached, http, timeout, store, allow_insecure_http=insecure
+                )
                 try:
                     if cached.expires_soon(time.time()):
                         if not session.renew():
                             raise LoginRequiredError(resolved)
-                    return cls(
-                        resolved, timeout=timeout, transport=http, token=session.token, cache=store
-                    )
+                    return make(session.token)
                 except LoginRequiredError:
                     pass
-        token = login_flow(resolved, http, timeout, open_browser=open_browser, on_url=on_url)
+        token = login_flow(
+            resolved,
+            http,
+            timeout,
+            open_browser=open_browser,
+            on_url=on_url,
+            allow_insecure_http=insecure,
+        )
         store.save(resolved, token)
-        return cls(resolved, timeout=timeout, transport=http, token=token, cache=store)
+        return make(token)
 
     def logout(self) -> None:
         """Forgets the session kept for this Store. The browser's sign-in stays."""
@@ -305,7 +347,10 @@ class TrustGateUser:
         """
         parsed = urlparse(self.url)
         config = Config(
-            base_url=f"{parsed.scheme}://{parsed.netloc}", api_key="", timeout=self._timeout
+            base_url=f"{parsed.scheme}://{parsed.netloc}",
+            api_key="",
+            timeout=self._timeout,
+            allow_insecure_http=self._insecure,
         )
         transport = MCPTransport(config, self._transport, self.url, credentials=self.session)
         tools = transport.list_tools()
@@ -317,6 +362,22 @@ class TrustGateUser:
                 "Install them from the Store, or ask an admin to grant them in Access.",
             )
         return UserAgent(transport, tools)
+
+
+def _on_safe_plane(consumer: KeyConsumer, config: Config) -> KeyConsumer:
+    """The consumer, once its address is one the key may be sent to.
+
+    The key already went to the base URL to ask, so this is not about trusting
+    the answer's host - the LLM plane lives on another one by design. It is
+    about the scheme: an https gateway must not be able to point the key at
+    plain http.
+    """
+    require_safe_url(
+        consumer.url,
+        config.allow_insecure_http,
+        f'the address the gateway gave for "{consumer.slug}"',
+    )
+    return consumer
 
 
 def _on_mcp_plane(config: Config, slug: str, url: str) -> Config:
