@@ -158,7 +158,9 @@ class Agent(_ToolSurface):
         No round trip and no second surface to read: the toolkit an admin bound
         is the application's, identical for everyone it acts for. What changes
         is one header, and with it whose upstream account the gateway reaches
-        for.
+        for. The gateway does not verify that header: pass the id of the user
+        your backend authenticated, never one taken from the request (see
+        :meth:`TrustGate.for_end_user`).
         """
         return end_user_agent(
             self._config,

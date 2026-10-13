@@ -222,7 +222,13 @@ class TrustGate:
 
         The name is asserted by this application and not verified, so the
         gateway namespaces it: two applications naming ``user_123`` never share
-        an account. What that person still has to connect is theirs to connect
+        an account. Within this application, though, the key is the only check:
+        whoever holds it can name anyone and reach the accounts that person
+        connected here. Keep the key on your backend and pass the id of the user
+        your backend authenticated, never one taken from the request; a person
+        using their own client is :class:`TrustGateUser`.
+
+        What that person still has to connect is theirs to connect
         - the handle's own connections mint the link to put in front of them -
         which is why there is no startup preflight here and one in
         :meth:`connect`.
