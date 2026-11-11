@@ -1,6 +1,8 @@
 export {
 	TrustGate,
 	TrustGateUser,
+	type A2AAgent,
+	type A2AOptions,
 	type ConnectOptions,
 	type LLMEndpoint,
 	type LoginOptions,
@@ -10,6 +12,7 @@ export { FileTokenCache, MemoryTokenCache, type TokenCache, type UserToken } fro
 export {
 	whoAmI,
 	selectConsumer,
+	type KeyAgent,
 	type KeyConsumer,
 	type KeyIdentity,
 	type KeyInfo,

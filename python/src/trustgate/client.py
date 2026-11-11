@@ -6,17 +6,18 @@ import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from .agent import Agent, EndUserAgent, UserAgent, end_user_agent
 from .config import (
     API_KEY_HEADER,
+    END_USER_HEADER,
     Config,
     insecure_http_from_env,
     require_safe_url,
     resolve_config,
 )
-from .connections import list_connections
+from .connections import list_connections, require_end_user
 from .errors import (
     ConsentRequiredError,
     LoginRequiredError,
@@ -39,6 +40,7 @@ from .user import (
 from .whoami import (
     BLOCKED_BY_ADMINISTRATOR,
     BLOCKED_BY_END_USER,
+    KeyAgent,
     KeyConsumer,
     KeyIdentity,
     KeyUpstream,
@@ -70,6 +72,24 @@ class LLMEndpoint:
         application's root, the one every dialect but OpenAI's hangs from.
         """
         return _without_version(self.base_url)
+
+
+@dataclass(frozen=True)
+class A2AAgent:
+    """One A2A agent, with what an A2A client needs to reach it through the gateway."""
+
+    id: str
+    name: str
+    #: The agent's card on the gateway. It sits under ``url``.
+    card_url: str
+    #: The A2A version the agent speaks.
+    protocol_version: str
+    #: The agent's JSON-RPC endpoint.
+    url: str
+    # Out of the repr: the key, and the end user when one was named. The card takes them too.
+    headers: dict[str, str] = field(repr=False)
+    #: The consumer behind it, for logs and for error messages.
+    consumer: str
 
 
 def _without_version(url: str) -> str:
@@ -129,6 +149,79 @@ class TrustGate:
             api_key=self._config.api_key,
             headers={API_KEY_HEADER: self._config.api_key},
             consumer=consumer.slug,
+        )
+
+    def agents(self, end_user: str | None = None) -> list[A2AAgent]:
+        """The A2A agents this key reaches, ready for an A2A client.
+
+        Nothing here speaks A2A: like :attr:`Agent.mcp`, it is the address and
+        the headers, for a client that brings its own protocol. ``end_user``
+        names the person the calls are for, as in :meth:`for_end_user`.
+        """
+        self._application_only()
+        consumers = [c for c in self.identity().consumers if c.type == "A2A"]
+        if not consumers:
+            raise PlaneUnavailableError(
+                "this API key reaches no A2A consumer. Ask the admin who owns this "
+                "application to attach one."
+            )
+        served = [c for c in consumers if c.url]
+        if not served:
+            raise PlaneUnavailableError(
+                "the gateway publishes no host for its A2A plane, so its agents have no "
+                "address. Ask an operator to configure that plane's domain."
+            )
+        headers = {API_KEY_HEADER: self._config.api_key}
+        if end_user is not None:
+            headers[END_USER_HEADER] = require_end_user(end_user)
+        return [
+            self._a2a_agent(_on_safe_plane(consumer, self._config), agent, headers)
+            for consumer in served
+            for agent in consumer.agents or []
+        ]
+
+    def _a2a_agent(
+        self, consumer: KeyConsumer, agent: KeyAgent, headers: dict[str, str]
+    ) -> A2AAgent:
+        require_safe_url(
+            agent.card_url,
+            self._config.allow_insecure_http,
+            f'the card the gateway gave for "{agent.name}"',
+        )
+        return A2AAgent(
+            id=agent.id,
+            name=agent.name,
+            card_url=agent.card_url,
+            protocol_version=agent.protocol_version,
+            url=f"{consumer.url.rstrip('/')}/{quote(agent.id, safe='')}",
+            headers=dict(headers),
+            consumer=consumer.slug,
+        )
+
+    def agent(self, name_or_id: str, end_user: str | None = None) -> A2AAgent:
+        """One A2A agent, by its id or its name.
+
+        A name two agents share is asked about rather than guessed: the id is
+        the one that is unique.
+        """
+        agents = self.agents(end_user)
+        for agent in agents:
+            if agent.id == name_or_id:
+                return agent
+        named = [agent for agent in agents if agent.name == name_or_id]
+        if len(named) == 1:
+            return named[0]
+        if named:
+            ids = ", ".join(agent.id for agent in named)
+            raise TrustGateError(
+                f'more than one agent is called "{name_or_id}" ({ids}). '
+                "Name the one you mean by its id.",
+                code="ambiguous_agent",
+            )
+        reachable = ", ".join(f"{agent.name} ({agent.id})" for agent in agents)
+        raise TrustGateError(
+            f'this API key reaches no agent called "{name_or_id}"; it reaches {reachable or "none"}',
+            code="agent_not_found",
         )
 
     def connect(self, requires: list[str] | None = None) -> Agent:

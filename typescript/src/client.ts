@@ -1,6 +1,7 @@
 import { Agent, EndUserAgent, UserAgent, endUserAgent } from './agent.js'
 import {
 	API_KEY_HEADER,
+	END_USER_HEADER,
 	insecureHttpFromEnv,
 	maskedWhenPrinted,
 	requireSafeUrl,
@@ -8,7 +9,7 @@ import {
 	type ResolvedConfig,
 	type TrustGateConfig,
 } from './config.js'
-import { listConnections } from './connections.js'
+import { listConnections, requireEndUser } from './connections.js'
 import {
 	ConsentRequiredError,
 	LoginRequiredError,
@@ -30,7 +31,14 @@ import {
 	type TokenCache,
 	type UserToken,
 } from './user.js'
-import { selectConsumer, whoAmI, type KeyConsumer, type KeyIdentity, type KeyUpstream } from './whoami.js'
+import {
+	selectConsumer,
+	whoAmI,
+	type KeyAgent,
+	type KeyConsumer,
+	type KeyIdentity,
+	type KeyUpstream,
+} from './whoami.js'
 
 export type ConnectOptions = {
 	/**
@@ -62,6 +70,22 @@ export type LLMEndpoint = {
 	headers: Record<string, string>
 	/** The consumer behind it, for logs and for error messages. */
 	consumer: string
+}
+
+/** One A2A agent, with what an A2A client needs to reach it through the gateway. */
+export type A2AAgent = KeyAgent & {
+	/** The agent's JSON-RPC endpoint. Its card is `cardUrl`, under this one. */
+	url: string
+	/** The key, and the end user when one was named. The card takes them too. */
+	headers: Record<string, string>
+	/** The consumer behind it, for logs and for error messages. */
+	consumer: string
+}
+
+export type A2AOptions = {
+	/** The person the calls are for, as in {@link TrustGate.forEndUser}. */
+	endUser?: string
+	signal?: AbortSignal
 }
 
 /**
@@ -114,6 +138,70 @@ export class TrustGate {
 			},
 			['apiKey', 'headers']
 		)
+	}
+
+	/**
+	 * The A2A agents this key reaches, ready for an A2A client.
+	 *
+	 * Nothing here speaks A2A: like {@link Agent.mcp}, it is the address and the
+	 * headers, for a client that brings its own protocol.
+	 */
+	async agents(options: A2AOptions = {}): Promise<A2AAgent[]> {
+		const identity = await this.applicationOnly(options.signal)
+		const consumers = identity.consumers.filter((consumer) => consumer.type === 'A2A')
+		if (consumers.length === 0) {
+			throw new PlaneUnavailableError(
+				'this API key reaches no A2A consumer. Ask the admin who owns this application to attach one.'
+			)
+		}
+		const served = consumers.filter((consumer) => consumer.url)
+		if (served.length === 0) {
+			throw new PlaneUnavailableError(
+				'the gateway publishes no host for its A2A plane, so its agents have no address. ' +
+					"Ask an operator to configure that plane's domain."
+			)
+		}
+		const headers: Record<string, string> = { [API_KEY_HEADER]: this.#config.apiKey }
+		if (options.endUser !== undefined) headers[END_USER_HEADER] = requireEndUser(options.endUser)
+		return served.flatMap((consumer) =>
+			(onSafePlane(consumer, this.#config).agents ?? []).map((agent) => {
+				requireSafeUrl(agent.cardUrl, this.#config.allowInsecureHttp, `the card the gateway gave for "${agent.name}"`)
+				return maskedWhenPrinted<A2AAgent>(
+					{
+						...agent,
+						url: `${consumer.url.replace(/\/+$/, '')}/${encodeURIComponent(agent.id)}`,
+						headers: { ...headers },
+						consumer: consumer.slug,
+					},
+					['headers']
+				)
+			})
+		)
+	}
+
+	/**
+	 * One A2A agent, by its id or its name.
+	 *
+	 * A name two agents share is asked about rather than guessed: the id is the
+	 * one that is unique.
+	 */
+	async agent(nameOrId: string, options: A2AOptions = {}): Promise<A2AAgent> {
+		const agents = await this.agents(options)
+		const byId = agents.find((agent) => agent.id === nameOrId)
+		if (byId) return byId
+		const named = agents.filter((agent) => agent.name === nameOrId)
+		if (named.length === 1) return named[0]
+		if (named.length > 1) {
+			throw new TrustGateError(
+				`more than one agent is called "${nameOrId}" (${named.map((agent) => agent.id).join(', ')}). ` +
+					'Name the one you mean by its id.',
+				{ code: 'ambiguous_agent' }
+			)
+		}
+		const reachable = agents.map((agent) => `${agent.name} (${agent.id})`).join(', ')
+		throw new TrustGateError(`this API key reaches no agent called "${nameOrId}"; it reaches ${reachable || 'none'}`, {
+			code: 'agent_not_found',
+		})
 	}
 
 	/**

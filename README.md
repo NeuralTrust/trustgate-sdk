@@ -99,6 +99,16 @@ Nothing is wrapped: wrapping would mean chasing every change OpenAI and
 Anthropic make, and breaking streaming on the way. Models and tools, one key,
 both governed.
 
+## The agent plane
+
+A2A agents behind the same key are found the same way, and handed over the same
+way — an address and headers for the A2A client you already use:
+
+```ts
+const planner = await tg.agent('Travel planner')
+// planner.cardUrl, planner.url (JSON-RPC), planner.headers
+```
+
 ## What `connect()` proves before anything runs
 
 1. **That the servers have an account to call with.** There is no runtime
@@ -196,7 +206,7 @@ naming its users as above.
 [`examples/`](examples) holds programs that run as they are: an end-user
 assistant, a framework using its own MCP client and a signed-in user's own
 assistant in both languages, a batch job in Python, a direct OpenAI Responses
-loop in TypeScript, and `whoami` in both. Each project builds the SDK from this repository and takes its gateway and
+loop in TypeScript, an A2A agent called through the A2A SDK and `whoami` in both. Each project builds the SDK from this repository and takes its gateway and
 key from a `.env` you copy from the `.env.example` beside it:
 
 ```sh

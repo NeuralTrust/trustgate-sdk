@@ -56,6 +56,18 @@ class KeyInfo:
 
 
 @dataclass(frozen=True)
+class KeyAgent:
+    """One A2A agent behind a consumer, as the gateway serves it."""
+
+    id: str
+    name: str
+    #: The agent's card on the gateway, never the agent's own address.
+    card_url: str
+    #: The A2A version the agent speaks.
+    protocol_version: str = ""
+
+
+@dataclass(frozen=True)
 class KeyConsumer:
     """One consumer the key reaches, with the address it is served on."""
 
@@ -71,6 +83,8 @@ class KeyConsumer:
     #: is also what a gateway that could not read the accounts answers, and a
     #: server carrying its own credential is never listed. Read ``blocked``.
     upstreams: list[KeyUpstream] | None = None
+    #: The agents behind an A2A consumer. ``None`` on every other plane.
+    agents: list[KeyAgent] | None = None
 
 
 @dataclass(frozen=True)
@@ -128,6 +142,7 @@ def who_am_i(config: Config, transport: Transport) -> KeyIdentity:
                 url=item.get("url", "") or "",
                 name=item.get("name") or None,
                 upstreams=_upstreams(item.get("upstreams")),
+                agents=_agents(item.get("agents")),
             )
             for item in (body.get("consumers") or [])
         ],
@@ -147,6 +162,21 @@ def _upstreams(raw: object) -> list[KeyUpstream] | None:
             blocked=item.get("blocked")
             if item.get("blocked") in (BLOCKED_BY_ADMINISTRATOR, BLOCKED_BY_END_USER)
             else None,
+        )
+        for item in raw
+        if isinstance(item, dict)
+    ]
+
+
+def _agents(raw: object) -> list[KeyAgent] | None:
+    if not isinstance(raw, list):
+        return None
+    return [
+        KeyAgent(
+            id=item.get("id", ""),
+            name=item.get("name", ""),
+            card_url=item.get("card_url", ""),
+            protocol_version=item.get("protocol_version", ""),
         )
         for item in raw
         if isinstance(item, dict)

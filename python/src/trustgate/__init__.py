@@ -8,7 +8,7 @@ upstream account is not connected.
 """
 
 from .agent import Agent, EndUserAgent, Toolkit, UserAgent
-from .client import LLMEndpoint, TrustGate, TrustGateUser
+from .client import A2AAgent, LLMEndpoint, TrustGate, TrustGateUser
 from .config import API_KEY_HEADER, END_USER_HEADER
 from .errors import (
     AuthenticationError,
@@ -40,6 +40,7 @@ from .types import (
 )
 from .user import FileTokenCache, MemoryTokenCache, TokenCache, UserToken
 from .whoami import (
+    KeyAgent,
     KeyConsumer,
     KeyIdentity,
     KeyInfo,
@@ -51,6 +52,7 @@ from .whoami import (
 __version__ = "0.3.1"
 
 __all__ = [
+    "A2AAgent",
     "Actor",
     "Agent",
     "API_KEY_HEADER",
@@ -64,6 +66,7 @@ __all__ = [
     "FileTokenCache",
     "EndUserAgent",
     "GatewayTool",
+    "KeyAgent",
     "KeyConsumer",
     "KeyIdentity",
     "KeyInfo",

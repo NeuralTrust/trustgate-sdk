@@ -26,6 +26,16 @@ export type KeyUpstream = {
 	blocked?: UpstreamBlockedBy
 }
 
+/** One A2A agent behind a consumer, as the gateway serves it. */
+export type KeyAgent = {
+	id: string
+	name: string
+	/** The agent's card on the gateway, never the agent's own address. */
+	cardUrl: string
+	/** The A2A version the agent speaks. */
+	protocolVersion: string
+}
+
 /** One consumer the key reaches, with the address it is served on. */
 export type KeyConsumer = {
 	slug: string
@@ -44,6 +54,8 @@ export type KeyConsumer = {
 	 * credential is never listed. Read `blocked`, never a length.
 	 */
 	upstreams?: KeyUpstream[]
+	/** The agents behind an A2A consumer. `undefined` on every other plane. */
+	agents?: KeyAgent[]
 }
 
 /** The calling key itself. The secret is never echoed. */
@@ -82,6 +94,7 @@ type Payload = {
 			needs_reconnect?: boolean
 			blocked?: string
 		}[]
+		agents?: { id?: string; name?: string; card_url?: string; protocol_version?: string }[]
 	}[]
 }
 
@@ -117,6 +130,12 @@ export async function whoAmI(config: ResolvedConfig, signal?: AbortSignal): Prom
 				connected: upstream.connected === true,
 				needsReconnect: upstream.needs_reconnect === true,
 				blocked: blockedBy(upstream.blocked),
+			})),
+			agents: consumer.agents?.map((agent) => ({
+				id: agent.id ?? '',
+				name: agent.name ?? '',
+				cardUrl: agent.card_url ?? '',
+				protocolVersion: agent.protocol_version ?? '',
 			})),
 		})),
 	}
