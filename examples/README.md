@@ -18,6 +18,7 @@ values — your gateway and one API key — from a `.env` you copy from the
 | `typescript/openai-responses.ts` | Tools translated for the Responses API and run back through the gateway — no MCP client in sight |
 | `typescript/end-user-agent.ts` | The same shape as `end_user_agent.py`, against the Responses API |
 | `typescript/framework-mcp.ts` | The same application handed to a framework that brings its own MCP client |
+| `python/a2a_agent.py`, `typescript/a2a-agent.ts` | One of the application's A2A agents, found by name and handed to the A2A SDK (`a2a-sdk`, `@a2a-js/sdk`) |
 | `python/user_agent.py`, `typescript/user-agent.ts` | No application at all: you sign in through the browser and get your own Store — the servers you installed, narrowed to what Access grants you |
 
 There are two ways to use an application's tools, and both are here in both
@@ -77,6 +78,7 @@ uv run whoami.py
 uv run batch.py
 uv run end_user_agent.py user_123 "what changed in the runbook this week?"
 uv run framework_mcp.py
+uv run a2a_agent.py "Travel planner" "plan a weekend in Lisbon"
 uv run user_agent.py "what changed in the runbook this week?"
 ```
 
@@ -96,6 +98,7 @@ npm run whoami
 npm run openai
 npm run end-user -- user_123 "what changed in the runbook this week?"
 npm run framework
+npm run a2a -- "Travel planner" "plan a weekend in Lisbon"
 npm run user -- "what changed in the runbook this week?"
 ```
 

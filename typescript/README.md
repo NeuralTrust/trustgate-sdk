@@ -91,6 +91,21 @@ connects, and the user travels in one.
 The name is yours to choose and the gateway namespaces it, so two applications
 naming `user_123` never reach the same account.
 
+## Calling the application's A2A agents
+
+```ts
+await tg.agents()                    // every agent the key reaches
+const planner = await tg.agent('Travel planner', { endUser: 'user_123' })
+// { id, name, cardUrl, protocolVersion, url, headers, consumer }
+```
+
+The SDK does not speak A2A: an A2A client (`@a2a-js/sdk`) takes `cardUrl` and
+`headers`, and both the card and the calls go through the gateway with them.
+`url` is the agent's JSON-RPC endpoint. `endUser` adds the same header as
+`forEndUser`. A name two agents share throws (`code: 'ambiguous_agent'`); use
+the id. An unknown one throws `code: 'agent_not_found'` and lists what the key
+reaches.
+
 ## An agent for yourself
 
 No application: your own Store — the servers you installed, narrowed to what
@@ -168,7 +183,7 @@ strict asked for are stripped unless the tool's own schema accepts them.
 | `LoginRequiredError` | a signed-in session has ended and cannot be renewed; call `TrustGate.login()` again |
 | `PolicyBlockedError` | a gateway policy refused the call |
 | `ToolNotFoundError` | the tool left the toolkit under a running agent, or the model named one the toolkit was not built with |
-| `PlaneUnavailableError` | the key reaches no application on that plane |
+| `PlaneUnavailableError` | the key reaches no application on that plane, or no A2A consumer for `agents()` |
 | `AuthenticationError`, `RateLimitedError`, `ServiceUnavailableError`, `TrustGateServerError` | as named |
 
 ## Documentation
