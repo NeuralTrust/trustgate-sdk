@@ -49,7 +49,7 @@ from .whoami import (
     who_am_i,
 )
 
-__version__ = "0.3.1"
+__version__ = "0.4.0"
 
 __all__ = [
     "A2AAgent",
