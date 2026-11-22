@@ -179,7 +179,22 @@ class ConsentRequiredError(TrustGateError):
 
 
 class PolicyBlockedError(TrustGateError):
-    """A policy on the gateway refused the call. Not retryable."""
+    """A policy on the gateway refused the call. Not retryable.
+
+    ``plugin`` names the policy's plugin when the gateway says which one did
+    (an A2A refusal does).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: int | None = None,
+        code: str | None = None,
+        plugin: str | None = None,
+    ) -> None:
+        super().__init__(message, status=status, code=code)
+        self.plugin = plugin
 
 
 class ToolNotFoundError(TrustGateError):

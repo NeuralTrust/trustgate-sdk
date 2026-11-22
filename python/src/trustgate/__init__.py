@@ -7,6 +7,7 @@ agent was written around are still on its toolkit, and what to do when an
 upstream account is not connected.
 """
 
+from . import a2a
 from .agent import Agent, EndUserAgent, Toolkit, UserAgent
 from .client import A2AAgent, LLMEndpoint, TrustGate, TrustGateUser
 from .config import API_KEY_HEADER, END_USER_HEADER
@@ -52,6 +53,7 @@ from .whoami import (
 __version__ = "0.4.0"
 
 __all__ = [
+    "a2a",
     "A2AAgent",
     "Actor",
     "Agent",

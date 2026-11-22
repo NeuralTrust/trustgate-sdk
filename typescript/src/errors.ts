@@ -170,7 +170,18 @@ export class ConsentRequiredError extends TrustGateError {
 }
 
 /** A policy on the gateway refused the call. Not retryable. */
-export class PolicyBlockedError extends TrustGateError {}
+export class PolicyBlockedError extends TrustGateError {
+	/** The policy's plugin, when the gateway says which one blocked (an A2A refusal does). */
+	readonly plugin?: string
+
+	constructor(
+		message: string,
+		options: { status?: number; code?: string; cause?: unknown; plugin?: string } = {}
+	) {
+		super(message, options)
+		this.plugin = options.plugin
+	}
+}
 
 /** The tool is not on this consumer's surface — usually because it just left it. */
 export class ToolNotFoundError extends TrustGateError {
@@ -181,8 +192,8 @@ export class ToolNotFoundError extends TrustGateError {
 
 /** The connect-attempt limiter refused this call. */
 export class RateLimitedError extends TrustGateError {
-	constructor(message: string, readonly retryAfterMs?: number) {
-		super(message, { status: 429, code: 'rate_limited' })
+	constructor(message: string, readonly retryAfterMs?: number, options: { cause?: unknown } = {}) {
+		super(message, { status: 429, code: 'rate_limited', cause: options.cause })
 	}
 }
 

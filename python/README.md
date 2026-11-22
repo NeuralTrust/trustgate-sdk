@@ -113,6 +113,32 @@ header as `for_end_user`. A name two agents share raises (`code ==
 "ambiguous_agent"`); use the id. An unknown one raises `code ==
 "agent_not_found"` and lists what the key reaches.
 
+The gateway forwards the agent's JSON-RPC as it is, and answers with codes of
+its own only when it stops a call: `-32090` a policy blocked it, `-32091` a rate
+limit, `-32092` it could not complete the call, `-32093` the agent needs a
+signed-in user, `-32094` it refused the call before reading it. An A2A client
+knows none of them; `trustgate.a2a` raises them as this SDK's errors, the same
+ones an MCP call raises:
+
+```python
+from trustgate import PolicyBlockedError, a2a
+
+async with httpx.AsyncClient(headers=planner.headers, event_hooks=a2a.event_hooks()) as http:
+    client = await create_client(planner.url, client_config=ClientConfig(httpx_client=http))
+    try:
+        with a2a.gateway_errors():
+            async for event in client.send_message(request):
+                ...
+    except PolicyBlockedError as e:
+        print(e.code, e.plugin)    # "policy_blocked" or "mask_unsupported", and which policy
+```
+
+`event_hooks()` reads each JSON answer as it arrives, so the error keeps its
+reason, the blocking plugin and a rate limit's wait, which a2a-sdk 1.x drops;
+`gateway_errors()` catches what the A2A client raises, an error in an event
+stream included. `a2a.gateway_error(e)` does the same for one error and returns
+`None` for anything else: an error the agent answers itself is left as it came.
+
 ## An agent for yourself
 
 No application: your own Store - the servers you installed, narrowed to what
@@ -180,7 +206,7 @@ tests use a fake one. It is also where a retry policy or a proxy belongs.
 | `UpstreamNotConnectedError` | a server the call needs has no account behind it, at startup or on a call; `servers` names them and the message says who connects it - never a link |
 | `ConsentRequiredError` | an end user has not connected; carries `connect_url`, checked to be a page on this gateway |
 | `LoginRequiredError` | a signed-in session has ended and cannot be renewed; call `TrustGate.login()` again |
-| `PolicyBlockedError` | a gateway policy refused the call |
+| `PolicyBlockedError` | a gateway policy refused the call; on A2A, `code` says whether it blocked or could not write a mask, and `plugin` which policy |
 | `ToolNotFoundError` | the tool left the toolkit under a running agent, or the model named one the toolkit was not built with |
 | `PlaneUnavailableError` | the key reaches no application on that plane, or no A2A consumer for `agents()` |
 | `AuthenticationError`, `RateLimitedError`, `ServiceUnavailableError`, `TrustGateServerError` | as named |

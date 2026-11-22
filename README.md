@@ -109,6 +109,16 @@ const planner = await tg.agent('Travel planner')
 // planner.cardUrl, planner.url (JSON-RPC), planner.headers
 ```
 
+The A2A client speaks A2A; what the SDK adds is the gateway's own refusals. A
+call the gateway stops itself (a policy, a rate limit, an agent it cannot
+reach) answers with codes no A2A client knows, and `a2a` turns them into the
+errors an MCP call raises, so one `catch` handles both planes:
+
+```ts
+const reply = await a2a.withGatewayErrors(() => client.sendMessage(request))
+// PolicyBlockedError (code, plugin), RateLimitedError (retryAfterMs), …
+```
+
 ## What `connect()` proves before anything runs
 
 1. **That the servers have an account to call with.** There is no runtime

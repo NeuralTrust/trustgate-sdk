@@ -106,6 +106,30 @@ The SDK does not speak A2A: an A2A client (`@a2a-js/sdk`) takes `cardUrl` and
 the id. An unknown one throws `code: 'agent_not_found'` and lists what the key
 reaches.
 
+The gateway forwards the agent's JSON-RPC as it is, and answers with codes of
+its own only when it stops a call: `-32090` a policy blocked it, `-32091` a rate
+limit, `-32092` it could not complete the call, `-32093` the agent needs a
+signed-in user, `-32094` it refused the call before reading it. An A2A client
+knows none of them; `a2a` throws them as this SDK's errors, the same ones an
+MCP call throws:
+
+```ts
+import { PolicyBlockedError, a2a } from '@neuraltrust/trustgate'
+
+try {
+	const reply = await a2a.withGatewayErrors(() => client.sendMessage(request))
+	for await (const event of a2a.streamWithGatewayErrors(client.sendMessageStream(request))) {
+		// …
+	}
+} catch (e) {
+	if (e instanceof PolicyBlockedError) console.log(e.code, e.plugin) // 'policy_blocked' or 'mask_unsupported', and which policy
+	else throw e
+}
+```
+
+`a2a.gatewayError(e)` does the same for one error and returns `undefined` for
+anything else: an error the agent answers itself is left as it came.
+
 ## An agent for yourself
 
 No application: your own Store — the servers you installed, narrowed to what
@@ -181,7 +205,7 @@ strict asked for are stripped unless the tool's own schema accepts them.
 | `UpstreamNotConnectedError` | a server the call needs has no account behind it, at startup or on a call; `servers` names them and the message says who connects it — never a link |
 | `ConsentRequiredError` | an end user has not connected; carries `connectUrl`, checked to be a page on this gateway |
 | `LoginRequiredError` | a signed-in session has ended and cannot be renewed; call `TrustGate.login()` again |
-| `PolicyBlockedError` | a gateway policy refused the call |
+| `PolicyBlockedError` | a gateway policy refused the call; on A2A, `code` says whether it blocked or could not write a mask, and `plugin` which policy |
 | `ToolNotFoundError` | the tool left the toolkit under a running agent, or the model named one the toolkit was not built with |
 | `PlaneUnavailableError` | the key reaches no application on that plane, or no A2A consumer for `agents()` |
 | `AuthenticationError`, `RateLimitedError`, `ServiceUnavailableError`, `TrustGateServerError` | as named |
