@@ -16,7 +16,7 @@ import {
 	JsonRpcTransportFactory,
 	createAuthenticatingFetchWithRetry,
 } from '@a2a-js/sdk/client'
-import { TrustGate } from '@neuraltrust/trustgate'
+import { TrustGate, a2a } from '@neuraltrust/trustgate'
 
 import { fail, gatewayEnv } from './config.ts'
 
@@ -40,10 +40,16 @@ const factory = new ClientFactory(
 // would replace its last segment instead of appending to it.
 const client = await factory.createFromUrl(agent.cardUrl, '')
 
-const reply = await client.sendMessage(
-	SendMessageRequest.fromJSON({
-		message: { messageId: crypto.randomUUID(), role: 'ROLE_USER', parts: [{ text }] },
-	})
-)
+// The gateway's own refusals (a policy, a rate limit) come back as the SDK's
+// errors, with their reason, rather than as a bare JSON-RPC error.
+const reply = await a2a
+	.withGatewayErrors(() =>
+		client.sendMessage(
+			SendMessageRequest.fromJSON({
+				message: { messageId: crypto.randomUUID(), role: 'ROLE_USER', parts: [{ text }] },
+			})
+		)
+	)
+	.catch(fail)
 const parts = 'parts' in reply ? reply.parts : (reply.status?.message?.parts ?? [])
 console.log(parts.map((part) => (part.content?.$case === 'text' ? part.content.value : '')).join('\n'))

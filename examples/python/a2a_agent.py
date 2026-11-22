@@ -16,7 +16,7 @@ from a2a.client import ClientConfig, create_client
 from a2a.helpers import get_stream_response_text, new_text_message
 from a2a.types import Role, SendMessageRequest
 
-from trustgate import TrustGate, TrustGateError
+from trustgate import TrustGate, TrustGateError, a2a
 
 from _config import gateway_env
 
@@ -33,11 +33,19 @@ async def main() -> None:
     except TrustGateError as error:
         sys.exit(str(error))
 
-    async with httpx.AsyncClient(headers=agent.headers, timeout=120) as http:
+    # The hooks read the gateway's own refusals (a policy, a rate limit) with
+    # their reason, and gateway_errors() raises them as the SDK's errors.
+    async with httpx.AsyncClient(
+        headers=agent.headers, timeout=120, event_hooks=a2a.event_hooks()
+    ) as http:
         client = await create_client(agent.url, client_config=ClientConfig(httpx_client=http))
         request = SendMessageRequest(message=new_text_message(text, role=Role.ROLE_USER))
-        async for event in client.send_message(request):
-            print(get_stream_response_text(event))
+        try:
+            with a2a.gateway_errors():
+                async for event in client.send_message(request):
+                    print(get_stream_response_text(event))
+        except TrustGateError as error:
+            sys.exit(str(error))
 
 
 if __name__ == "__main__":

@@ -52,3 +52,4 @@ export {
 	UpstreamNotConnectedError,
 	type BlockedUpstream,
 } from './errors.js'
+export * as a2a from './a2a.js'
