@@ -74,7 +74,12 @@ The gateway serves a tool under the server it came from - Notion's `search` as
 `notion_search` - so two servers with a `search` stay apart. That prefix is the
 gateway's, so `requires` and `call_tool` take the name the server itself gave the
 tool and add it; naming a tool two of your servers serve is the one case they
-ask instead.
+ask instead. On a gateway set to list only its own tools, both look the name up
+through the gateway's search, and `agent.tools` keeps what the gateway lists.
+
+A Code Mode program (`trustgate_execute`) is waited for at least 60 s, whatever
+`timeout` says: the gateway stops it at its own limit and answers with what it
+did.
 
 ## An agent acting for one of its users
 

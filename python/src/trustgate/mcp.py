@@ -52,6 +52,26 @@ CODE_INVALID_REQUEST = -32600
 CODE_INVALID_PARAMS = -32602
 CODE_INTERNAL = -32603
 
+#: The gateway's search over every tool the caller can reach, listed or not.
+SEARCH_TOOL = "trustgate_search"
+
+#: Calls one tool by name, for a client whose list does not carry it.
+CALL_TOOL = "trustgate_call"
+
+#: Runs a Code Mode program: one call that makes many on the gateway.
+PROGRAM_TOOL = "trustgate_execute"
+
+#: The least a Code Mode program is waited for, in seconds. The gateway stops a
+#: program at its own limit (30 s at most) and answers with the calls it made
+#: and its logs; a client that gives up first gets none of that.
+PROGRAM_TIMEOUT = 60.0
+
+#: Tools per page when the search lists a surface, the most the gateway gives.
+_SEARCH_PAGE = 50
+
+#: Pages read before a listing stops: 2,000 tools, far more than one surface holds.
+_SEARCH_PAGES = 40
+
 
 class MCPTransport:
     def __init__(
@@ -90,8 +110,11 @@ class MCPTransport:
         ]
 
     def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+        timeout = None
+        if runs_program(name, arguments):
+            timeout = max(self._config.timeout, PROGRAM_TIMEOUT)
         try:
-            return self.call("tools/call", {"name": name, "arguments": arguments or {}})
+            return self.call("tools/call", {"name": name, "arguments": arguments or {}}, timeout)
         except InvalidRequestError as error:
             # The gateway reports an unknown tool as invalid params, which is
             # true of the request and useless to the caller: what they need to
@@ -100,17 +123,19 @@ class MCPTransport:
                 raise ToolNotFoundError(name, error.message) from error
             raise
 
-    def call(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+    def call(
+        self, method: str, params: dict[str, Any], timeout: float | None = None
+    ) -> dict[str, Any]:
         request_id = self._next_id
         self._next_id += 1
         body = json.dumps(
             {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}
         ).encode("utf-8")
-        response = self._post(body)
+        response = self._post(body, timeout)
         # A session token can be refused before its own expiry says so (the
         # clock here is not the gateway's); one renewal, one retry.
         if response.status == 401 and self._credentials is not None and self._credentials.renew():
-            response = self._post(body)
+            response = self._post(body, timeout)
         if response.status in (401, 403):
             refused = "this sign-in" if self._credentials is not None else "this API key"
             raise AuthenticationError(
@@ -128,7 +153,7 @@ class MCPTransport:
             raise _error_for_rpc(rpc["error"], self.url, response)
         return rpc.get("result") or {}
 
-    def _post(self, body: bytes) -> Response:
+    def _post(self, body: bytes, timeout: float | None = None) -> Response:
         return send(
             self._transport,
             "POST",
@@ -141,8 +166,56 @@ class MCPTransport:
                 "Accept": "application/json",
             },
             body,
-            self._config.timeout,
+            self._config.timeout if timeout is None else timeout,
         )
+
+
+def runs_program(name: str, arguments: dict[str, Any] | None) -> bool:
+    """Whether a call runs a Code Mode program, directly or through the call tool."""
+    if name == PROGRAM_TOOL:
+        return True
+    return (
+        name == CALL_TOOL and isinstance(arguments, dict) and arguments.get("tool") == PROGRAM_TOOL
+    )
+
+
+def unlisted_tools(transport: MCPTransport, listed: list[GatewayTool]) -> list[GatewayTool]:
+    """The tools the caller can call now that the listing leaves out.
+
+    A gateway can be set to list only its own tools - search, call and run a
+    program - so a model is not handed every server's schemas up front. The
+    caller's tools are still there and still answer by name; the search is
+    where they are listed. Read here so that a required tool or a short name
+    means the same whichever way the gateway lists. A tool whose server is
+    still waiting on an account is left out, as the listing leaves it out.
+
+    Empty when the listing has no search, or the search cannot list tools.
+    """
+    names = {tool.name for tool in listed}
+    if SEARCH_TOOL not in names:
+        return []
+    found: list[GatewayTool] = []
+    cursor = ""
+    for _ in range(_SEARCH_PAGES):
+        arguments: dict[str, Any] = {"kind": "tool", "brief": True, "limit": _SEARCH_PAGE}
+        if cursor:
+            arguments["cursor"] = cursor
+        result = transport.call_tool(SEARCH_TOOL, arguments)
+        structured = result.get("structuredContent")
+        if result.get("isError") or not isinstance(structured, dict):
+            break
+        entries = structured.get("results")
+        for entry in entries if isinstance(entries, list) else []:
+            if not isinstance(entry, dict) or entry.get("callable") is not True:
+                continue
+            name = str(entry.get("name") or "")
+            if name and name not in names:
+                names.add(name)
+                found.append(GatewayTool(name=name))
+        cursor = str(structured.get("next_cursor") or "")
+        if not cursor:
+            break
+    return found
 
 
 def parse_rpc_response(text: str, request_id: int) -> dict[str, Any] | None:

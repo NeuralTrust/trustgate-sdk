@@ -11,7 +11,7 @@ from .config import END_USER_HEADER, Config
 from .connections import create_connect_link, list_connections, require_end_user
 from .errors import ToolNotFoundError, TrustGateError
 from .formats import ConversionWarning, ToolResult, adapter_for, restore_arguments
-from .mcp import MCPTransport, gateway_connect_url
+from .mcp import MCPTransport, gateway_connect_url, unlisted_tools
 from .schema import Schema
 from .transport import Transport
 from .types import (
@@ -86,6 +86,8 @@ class _ToolSurface:
     def __init__(self, transport: MCPTransport, tools: list[GatewayTool]) -> None:
         self._transport = transport
         self.tools = tools
+        # The tools the listing leaves out, read the first time a name needs them.
+        self._unlisted: list[GatewayTool] | None = None
 
     @property
     def mcp(self) -> Endpoint:
@@ -106,9 +108,18 @@ class _ToolSurface:
         The server prefix is optional here: "list_issues" reaches
         "linear_list_issues" while Linear is the only server of this application
         that serves it. The gateway put that prefix there, so a caller writing
-        the name by hand should not have to.
+        the name by hand should not have to. On a gateway that lists only its
+        own tools, the name is looked up through its search.
         """
-        return self._transport.call_tool(resolve_tool_name(name, self.tools), arguments)
+        return self._transport.call_tool(self._resolve(name), arguments)
+
+    def _resolve(self, name: str) -> str:
+        resolved = resolve_tool_name(name, self.tools)
+        if any(tool.name == resolved for tool in self.tools):
+            return resolved
+        if self._unlisted is None:
+            self._unlisted = unlisted_tools(self._transport, self.tools)
+        return resolve_tool_name(name, self.tools + self._unlisted)
 
     def refresh(self) -> list[GatewayTool]:
         """Re-reads the surface.
@@ -118,6 +129,7 @@ class _ToolSurface:
         startup.
         """
         self.tools = self._transport.list_tools()
+        self._unlisted = None
         return self.tools
 
 

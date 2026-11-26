@@ -39,6 +39,11 @@ export type FakeOptions = {
 	/** Frames the tools/call response as an event stream, as the gateway does
 	 *  when it has a surface change to announce on the same response. */
 	frameAsEventStream?: boolean
+	/** What trustgate_search lists for `{kind: "tool"}`, paged as the gateway
+	 *  pages it: the caller's tools, listed or not, each with `callable`. */
+	searchable?: { name: string; server?: string; callable: boolean }[]
+	/** tools/call names that never answer: the request ends only when aborted. */
+	hang?: string[]
 }
 
 const END_USER_HEADER = 'X-NeuralTrust-End-User'
@@ -109,6 +114,14 @@ export function fakeGateway(options: FakeOptions = {}) {
 			}
 			if (rpc.method === 'tools/call') {
 				const name = String(rpc.params.name)
+				if (options.hang?.includes(name)) {
+					return new Promise<Response>((_, reject) => {
+						init?.signal?.addEventListener('abort', () => reject(init.signal?.reason))
+					})
+				}
+				if (name === 'trustgate_search' && options.searchable) {
+					return rpcOK(rpc.id, search(options.searchable, rpc.params.arguments as Record<string, unknown>), false)
+				}
 				const failure = options.callErrors?.[name]
 				if (failure) {
 					return rpcError(rpc.id, failure, options.frameAsEventStream ?? false)
@@ -123,7 +136,32 @@ export function fakeGateway(options: FakeOptions = {}) {
 		return json(404, { error: 'not_found', message: url })
 	}) as typeof globalThis.fetch
 
-	return { fetch: fetchImpl, requests }
+	/** The arguments of every trustgate_search call, in order. */
+	const searches = () =>
+		requests
+			.map((r) => r.body as { method?: string; params?: { name?: string; arguments?: Record<string, unknown> } })
+			.filter((b) => b?.method === 'tools/call' && b.params?.name === 'trustgate_search')
+			.map((b) => b.params?.arguments ?? {})
+
+	return { fetch: fetchImpl, requests, searches }
+}
+
+function search(
+	searchable: NonNullable<FakeOptions['searchable']>,
+	args: Record<string, unknown>
+): Record<string, unknown> {
+	const start = Number(args.cursor ?? 0)
+	const end = start + Number(args.limit ?? 10)
+	const page = searchable.slice(start, end)
+	return {
+		content: [{ type: 'text', text: `${page.length} tools` }],
+		structuredContent: {
+			kind: 'tool',
+			results: page,
+			returned: page.length,
+			...(end < searchable.length ? { next_cursor: String(end) } : {}),
+		},
+	}
 }
 
 function json(status: number, body: unknown): Response {

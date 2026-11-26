@@ -2,7 +2,7 @@ import { END_USER_HEADER, maskedWhenPrinted, type ResolvedConfig } from './confi
 import { createConnectLink, listConnections, requireEndUser } from './connections.js'
 import { ToolNotFoundError, TrustGateError } from './errors.js'
 import { adapterFor, restoreArguments, type ConversionWarning, type ToolResult } from './formats.js'
-import { MCPTransport, gatewayConnectUrl } from './mcp.js'
+import { MCPTransport, gatewayConnectUrl, unlistedTools } from './mcp.js'
 import {
 	Actor,
 	ToolFormat,
@@ -100,6 +100,27 @@ export class Toolkit<Tool = unknown, Output = unknown> {
 }
 
 /**
+ * A name as `callTool` resolves it: against the listing first, then, on a
+ * gateway that lists only its own tools, against what its search lists. That
+ * second list is read the first time a name needs it, and again after the
+ * surface is re-read.
+ */
+class SurfaceNames {
+	#unlisted?: GatewayTool[]
+
+	reset(): void {
+		this.#unlisted = undefined
+	}
+
+	async resolve(name: string, tools: GatewayTool[], transport: MCPTransport, signal?: AbortSignal): Promise<string> {
+		const resolved = resolveToolName(name, tools)
+		if (tools.some((tool) => tool.name === resolved)) return resolved
+		this.#unlisted ??= await unlistedTools(transport, tools, signal)
+		return resolveToolName(name, [...tools, ...this.#unlisted])
+	}
+}
+
+/**
  * An application's handle on its gateway.
  *
  * It speaks as the application itself: one principal, its own upstream
@@ -111,6 +132,7 @@ export class Agent {
 	readonly actor = Actor.Application
 	// Runtime-private: it holds the key, and a logged agent must not.
 	readonly #config: ResolvedConfig
+	readonly #names = new SurfaceNames()
 
 	constructor(
 		config: ResolvedConfig,
@@ -159,14 +181,16 @@ export class Agent {
 	 * The server prefix is optional here: "list_issues" reaches
 	 * "linear_list_issues" while Linear is the only server of this application
 	 * that serves it. The gateway put that prefix there, so a caller writing the
-	 * name by hand should not have to.
+	 * name by hand should not have to. On a gateway that lists only its own
+	 * tools, the name is looked up through its search.
 	 */
 	async callTool(
 		name: string,
 		args: Record<string, unknown> = {},
 		signal?: AbortSignal
 	): Promise<Record<string, unknown>> {
-		return this.transport.callTool(resolveToolName(name, this.tools), args, signal)
+		const resolved = await this.#names.resolve(name, this.tools, this.transport, signal)
+		return this.transport.callTool(resolved, args, signal)
 	}
 
 	/**
@@ -178,6 +202,7 @@ export class Agent {
 	 */
 	async refresh(signal?: AbortSignal): Promise<GatewayTool[]> {
 		this.tools = await this.transport.listTools(signal)
+		this.#names.reset()
 		return this.tools
 	}
 
@@ -305,6 +330,7 @@ interface PendingServer {
  */
 export class UserAgent {
 	readonly actor = Actor.User
+	readonly #names = new SurfaceNames()
 
 	constructor(
 		private readonly transport: MCPTransport,
@@ -344,12 +370,14 @@ export class UserAgent {
 		args: Record<string, unknown> = {},
 		signal?: AbortSignal
 	): Promise<Record<string, unknown>> {
-		return this.transport.callTool(resolveToolName(name, this.tools), args, signal)
+		const resolved = await this.#names.resolve(name, this.tools, this.transport, signal)
+		return this.transport.callTool(resolved, args, signal)
 	}
 
 	/** Re-reads the surface: after the person installs a server, or connects one. */
 	async refresh(signal?: AbortSignal): Promise<GatewayTool[]> {
 		this.tools = await this.transport.listTools(signal)
+		this.#names.reset()
 		this.pending = await readPending(this.transport, this.tools, signal)
 		return this.tools
 	}

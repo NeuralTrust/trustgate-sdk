@@ -25,6 +25,28 @@ const CODE_INVALID_REQUEST = -32600
 const CODE_INVALID_PARAMS = -32602
 const CODE_INTERNAL = -32603
 
+/** The gateway's search over every tool the caller can reach, listed or not. */
+export const SEARCH_TOOL = 'trustgate_search'
+
+/** Calls one tool by name, for a client whose list does not carry it. */
+export const CALL_TOOL = 'trustgate_call'
+
+/** Runs a Code Mode program: one call that makes many on the gateway. */
+export const PROGRAM_TOOL = 'trustgate_execute'
+
+/**
+ * The least a Code Mode program is waited for. The gateway stops a program at
+ * its own limit (30 s at most) and answers with the calls it made and its
+ * logs; a client that gives up first gets none of that.
+ */
+export const PROGRAM_TIMEOUT_MS = 60_000
+
+/** Tools per page when the search lists a surface, the most the gateway gives. */
+const SEARCH_PAGE = 50
+
+/** Pages read before a listing stops: 2,000 tools, far more than one surface holds. */
+const SEARCH_PAGES = 40
+
 /**
  * How a caller other than an API key authenticates: a signed-in person.
  *
@@ -91,8 +113,9 @@ export class MCPTransport {
 		args: Record<string, unknown>,
 		signal?: AbortSignal
 	): Promise<Record<string, unknown>> {
+		const timeoutMs = runsProgram(name, args) ? Math.max(this.#config.timeoutMs, PROGRAM_TIMEOUT_MS) : undefined
 		try {
-			return await this.call('tools/call', { name, arguments: args }, signal)
+			return await this.call('tools/call', { name, arguments: args }, signal, timeoutMs)
 		} catch (error) {
 			// The gateway reports an unknown tool as invalid params, which is
 			// true of the request and useless to the caller: what they need to
@@ -107,15 +130,16 @@ export class MCPTransport {
 	async call(
 		method: string,
 		params: Record<string, unknown>,
-		signal?: AbortSignal
+		signal?: AbortSignal,
+		timeoutMs?: number
 	): Promise<Record<string, unknown>> {
 		const id = this.nextId++
 		const body = JSON.stringify({ jsonrpc: '2.0', id, method, params })
-		let sent = await this.post(method, body, signal)
+		let sent = await this.post(method, body, signal, timeoutMs)
 		// A session token can be refused before its own expiry says so (the
 		// clock here is not the gateway's); one renewal, one retry.
 		if (sent.response.status === 401 && this.#credentials && (await this.#credentials.renew())) {
-			sent = await this.post(method, body, signal)
+			sent = await this.post(method, body, signal, timeoutMs)
 		}
 
 		const { response, text } = sent
@@ -136,7 +160,7 @@ export class MCPTransport {
 		return rpc.result ?? {}
 	}
 
-	private async post(method: string, body: string, signal?: AbortSignal): Promise<Sent> {
+	private async post(method: string, body: string, signal?: AbortSignal, timeoutMs?: number): Promise<Sent> {
 		const auth = this.#credentials
 			? { ...(await this.#credentials.headers()), ...this.extraHeaders }
 			: this.headers
@@ -154,9 +178,60 @@ export class MCPTransport {
 				},
 				body,
 			},
-			{ timeoutMs: this.#config.timeoutMs, signal, failure: `MCP ${method} failed to reach ${this.url}` }
+			{
+				timeoutMs: timeoutMs ?? this.#config.timeoutMs,
+				signal,
+				failure: `MCP ${method} failed to reach ${this.url}`,
+			}
 		)
 	}
+}
+
+/** Whether a call runs a Code Mode program, directly or through the call tool. */
+export function runsProgram(name: string, args: Record<string, unknown> | undefined): boolean {
+	if (name === PROGRAM_TOOL) return true
+	return name === CALL_TOOL && args?.tool === PROGRAM_TOOL
+}
+
+/**
+ * The tools the caller can call now that the listing leaves out.
+ *
+ * A gateway can be set to list only its own tools — search, call and run a
+ * program — so a model is not handed every server's schemas up front. The
+ * caller's tools are still there and still answer by name; the search is where
+ * they are listed. Read here so that a required tool or a short name means the
+ * same whichever way the gateway lists. A tool whose server is still waiting on
+ * an account is left out, as the listing leaves it out.
+ *
+ * Empty when the listing has no search, or the search cannot list tools.
+ */
+export async function unlistedTools(
+	transport: MCPTransport,
+	listed: GatewayTool[],
+	signal?: AbortSignal
+): Promise<GatewayTool[]> {
+	const names = new Set(listed.map((tool) => tool.name))
+	if (!names.has(SEARCH_TOOL)) return []
+	const found: GatewayTool[] = []
+	let cursor = ''
+	for (let page = 0; page < SEARCH_PAGES; page++) {
+		const args: Record<string, unknown> = { kind: 'tool', brief: true, limit: SEARCH_PAGE }
+		if (cursor) args.cursor = cursor
+		const result = await transport.callTool(SEARCH_TOOL, args, signal)
+		const structured = result.structuredContent
+		if (result.isError || !structured || typeof structured !== 'object') break
+		const { results, next_cursor: next } = structured as { results?: unknown; next_cursor?: unknown }
+		for (const entry of Array.isArray(results) ? results : []) {
+			if (!entry || typeof entry !== 'object' || (entry as { callable?: unknown }).callable !== true) continue
+			const name = String((entry as { name?: unknown }).name ?? '')
+			if (!name || names.has(name)) continue
+			names.add(name)
+			found.push({ name, inputSchema: { type: 'object', properties: {} } })
+		}
+		cursor = typeof next === 'string' ? next : ''
+		if (!cursor) break
+	}
+	return found
 }
 
 /**

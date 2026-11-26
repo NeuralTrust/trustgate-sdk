@@ -19,7 +19,7 @@ import {
 	UpstreamNotConnectedError,
 	type BlockedUpstream,
 } from './errors.js'
-import { MCPTransport } from './mcp.js'
+import { MCPTransport, unlistedTools } from './mcp.js'
 import { resolveToolName, type Connection, type GatewayTool } from './types.js'
 import {
 	FileTokenCache,
@@ -248,12 +248,12 @@ export class TrustGate {
 			if (accountMissing && blocked.length > 0) throw new UpstreamNotConnectedError(blocked)
 			throw error
 		}
-		const missing = missingTools(tools, required)
+		const { missing, surface } = await requirements(transport, tools, required, options.signal)
 		if (missing.length > 0 && blocked.length > 0) {
 			throw new UpstreamNotConnectedError(blocked)
 		}
 		if (missing.length > 0) {
-			throw new MissingToolsError(missing, tools.map((tool) => tool.name))
+			throw new MissingToolsError(missing, surface)
 		}
 		return new Agent(plane, consumer.slug, transport, tools, missing, connections)
 	}
@@ -300,11 +300,14 @@ export class TrustGate {
 	async forEndUser(endUser: string, options: ConnectOptions = {}): Promise<EndUserAgent> {
 		const identity = await this.applicationOnly(options.signal)
 		const consumer = onSafePlane(selectConsumer(identity, 'MCP', this.#config.mcpConsumer, 'mcpConsumer'), this.#config)
-		const agent = endUserAgent(onMCPPlane(this.#config, consumer), consumer.slug, endUser, consumer.url, [])
+		const plane = onMCPPlane(this.#config, consumer)
+		const agent = endUserAgent(plane, consumer.slug, endUser, consumer.url, [])
 		const tools = await agent.refresh(options.signal)
-		const missing = missingTools(tools, options.requires ?? [])
+		// The search answers for the person named, as the listing did.
+		const asEndUser = new MCPTransport(plane, consumer.url, { [END_USER_HEADER]: agent.endUser })
+		const { missing, surface } = await requirements(asEndUser, tools, options.requires ?? [], options.signal)
 		if (missing.length > 0) {
-			throw new MissingToolsError(missing, tools.map((tool) => tool.name))
+			throw new MissingToolsError(missing, surface)
 		}
 		return agent
 	}
@@ -567,11 +570,11 @@ export class TrustGateUser {
 				}
 		const transport = personal ? new MCPTransport(config, url) : new MCPTransport(config, url, {}, this.session)
 		const tools = await transport.listTools(options.signal)
-		const missing = missingTools(tools, options.requires ?? [])
+		const { missing, surface } = await requirements(transport, tools, options.requires ?? [], options.signal)
 		if (missing.length > 0) {
 			throw new MissingToolsError(
 				missing,
-				tools.map((tool) => tool.name),
+				surface,
 				'Install them from the Store, or ask an admin to grant them in Access.'
 			)
 		}
@@ -585,12 +588,31 @@ function fromEnv(name: string): string | undefined {
 }
 
 /**
- * The required tools this toolkit does not carry.
+ * The required tools the caller cannot call, and the ones it can.
  *
  * Each name is resolved the way callTool resolves it, so an agent may require
  * the name its server gave the tool and leave the gateway's server prefix to
- * the gateway.
+ * the gateway. A gateway that lists only its own tools still serves the
+ * caller's: those are read through its search, and only when the listing
+ * alone leaves a requirement unmet.
  */
+async function requirements(
+	transport: MCPTransport,
+	tools: GatewayTool[],
+	required: string[],
+	signal?: AbortSignal
+): Promise<{ missing: string[]; surface: string[] }> {
+	let missing = missingTools(tools, required)
+	if (missing.length > 0) {
+		const unlisted = await unlistedTools(transport, tools, signal)
+		if (unlisted.length > 0) {
+			tools = [...tools, ...unlisted]
+			missing = missingTools(tools, missing)
+		}
+	}
+	return { missing, surface: tools.map((tool) => tool.name) }
+}
+
 function missingTools(tools: GatewayTool[], required: string[]): string[] {
 	const names = new Set(tools.map((tool) => tool.name))
 	return required.filter((name) => !names.has(resolveToolName(name, tools)))
