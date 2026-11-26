@@ -26,7 +26,7 @@ from .errors import (
     TrustGateError,
     UpstreamNotConnectedError,
 )
-from .mcp import MCPTransport
+from .mcp import MCPTransport, unlisted_tools
 from .transport import Transport, UrllibTransport
 from .types import CONNECTED, Connection, GatewayTool, resolve_tool_name
 from .user import (
@@ -266,9 +266,11 @@ class TrustGate:
             if blocked:
                 raise UpstreamNotConnectedError(blocked) from error
             raise
-        if blocked and _missing(tools, required):
+        missing, surface = _requirements(transport, tools, required)
+        if blocked and missing:
             raise UpstreamNotConnectedError(blocked)
-        _check_requires(tools, required)
+        if missing:
+            raise MissingToolsError(missing, surface)
 
         return Agent(plane, self._transport, consumer.slug, transport, tools, connections)
 
@@ -339,7 +341,9 @@ class TrustGate:
             consumer.url,
             [],
         )
-        _check_requires(agent.refresh(), list(requires or []))
+        missing, surface = _requirements(agent._transport, agent.refresh(), list(requires or []))
+        if missing:
+            raise MissingToolsError(missing, surface)
         return agent
 
 
@@ -563,11 +567,11 @@ class TrustGateUser:
             )
             transport = MCPTransport(config, self._transport, url, credentials=self.session)
         tools = transport.list_tools()
-        missing = _missing(tools, list(requires or []))
+        missing, surface = _requirements(transport, tools, list(requires or []))
         if missing:
             raise MissingToolsError(
                 missing,
-                sorted(tool.name for tool in tools),
+                surface,
                 "Install them from the Store, or ask an admin to grant them in Access.",
             )
         return UserAgent(transport, tools)
@@ -610,16 +614,24 @@ def _on_mcp_plane(config: Config, slug: str, url: str) -> Config:
     return replace(config, base_url=trimmed[: -len(suffix)])
 
 
-def _check_requires(tools: list[GatewayTool], requires: list[str]) -> None:
-    """The tools an agent was written around, checked before anything runs.
+def _requirements(
+    transport: MCPTransport, tools: list[GatewayTool], requires: list[str]
+) -> tuple[list[str], list[str]]:
+    """The tools an agent was written around that it cannot call, and what it can.
 
     Each one is resolved the way call_tool resolves it, so an agent may require
     the name its server gave the tool and leave the gateway's server prefix to
-    the gateway.
+    the gateway. A gateway that lists only its own tools still serves the
+    caller's: those are read through its search, and only when the listing
+    alone leaves a requirement unmet.
     """
     missing = _missing(tools, requires)
     if missing:
-        raise MissingToolsError(missing, sorted(tool.name for tool in tools))
+        unlisted = unlisted_tools(transport, tools)
+        if unlisted:
+            tools = tools + unlisted
+            missing = _missing(tools, missing)
+    return missing, sorted(tool.name for tool in tools)
 
 
 def _missing(tools: list[GatewayTool], requires: list[str]) -> list[str]:

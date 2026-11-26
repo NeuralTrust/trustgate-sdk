@@ -19,6 +19,7 @@ class Recorded:
     url: str
     headers: dict[str, str]
     body: Any = None
+    timeout: float = 0.0
 
 
 @dataclass
@@ -55,6 +56,9 @@ class FakeGateway:
     #: Frames the tools/call response as an event stream, as the gateway does
     #: when it has a surface change to announce on the same response.
     frame_as_event_stream: bool = False
+    #: What trustgate_search lists for {"kind": "tool"}, paged as the gateway
+    #: pages it: the caller's tools, listed or not, each with "callable".
+    searchable: list[dict[str, Any]] | None = None
     requests: list[Recorded] = field(default_factory=list)
 
     def request(
@@ -66,7 +70,9 @@ class FakeGateway:
         timeout: float,
     ) -> Response:
         decoded = json.loads(body) if body else None
-        self.requests.append(Recorded(method=method, url=url, headers=dict(headers), body=decoded))
+        self.requests.append(
+            Recorded(method=method, url=url, headers=dict(headers), body=decoded, timeout=timeout)
+        )
 
         if url.endswith("/whoami"):
             if self.whoami_status:
@@ -131,6 +137,8 @@ class FakeGateway:
                 return self._rpc(rpc["id"], {"tools": [_tool_json(t) for t in self.tools]}, False)
             if rpc.get("method") == "tools/call":
                 name = rpc["params"]["name"]
+                if name == "trustgate_search" and self.searchable is not None:
+                    return self._rpc(rpc["id"], self._search(rpc["params"]["arguments"]), False)
                 if name in self.call_errors:
                     return self._rpc_error(rpc["id"], self.call_errors[name])
                 result = self.call_results.get(
@@ -138,6 +146,28 @@ class FakeGateway:
                 )
                 return self._rpc(rpc["id"], result, self.frame_as_event_stream)
         return _json(404, {"error": "not_found", "message": url})
+
+    def _search(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        start = int(arguments.get("cursor") or 0)
+        end = start + int(arguments.get("limit") or 10)
+        page = (self.searchable or [])[start:end]
+        structured: dict[str, Any] = {"kind": "tool", "results": page, "returned": len(page)}
+        if end < len(self.searchable or []):
+            structured["next_cursor"] = str(end)
+        return {
+            "content": [{"type": "text", "text": f"{len(page)} tools"}],
+            "structuredContent": structured,
+        }
+
+    def searches(self) -> list[dict[str, Any]]:
+        """The arguments of every trustgate_search call, in order."""
+        return [
+            r.body["params"]["arguments"]
+            for r in self.requests
+            if isinstance(r.body, dict)
+            and r.body.get("method") == "tools/call"
+            and r.body["params"]["name"] == "trustgate_search"
+        ]
 
     def _rpc(self, request_id: int, result: dict[str, Any], framed: bool) -> Response:
         return _envelope({"jsonrpc": "2.0", "id": request_id, "result": result}, framed)
